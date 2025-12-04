@@ -62,6 +62,28 @@ ZIPF_API_KEY=your_key npx @modelcontextprotocol/inspector node build/index.js
 npm run check
 ```
 
+## Hosting (Future)
+
+Currently this server uses stdio transport (runs locally as a subprocess). To host remotely:
+
+- Use `SSEServerTransport` from `@modelcontextprotocol/sdk/server/sse.js`
+- Add HTTP server (express or similar)
+- Handle auth via headers instead of env vars
+- Update `.mcp.json` to use `url` instead of `command`
+
+```typescript
+// Example remote setup
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import express from "express";
+
+const app = express();
+app.get("/sse", (req, res) => {
+  const transport = new SSEServerTransport("/messages", res);
+  server.connect(transport);
+});
+app.post("/messages", (req, res) => transport.handlePostMessage(req, res));
+```
+
 ## License
 
 MIT

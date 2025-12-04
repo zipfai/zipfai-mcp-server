@@ -37,6 +37,9 @@
   ],
   "author": "ZipfAI",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "bugs": {
     "url": "https://github.com/zipfai/zipfai-mcp-server/issues"
   },

@@ -1,6 +1,36 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { quickSearch, searchWithPolling } from "./api.js";
+import { ApiError, quickSearch, searchWithPolling } from "./api.js";
+
+// Helper to format errors for MCP response
+function formatError(error: unknown): {
+	content: { type: "text"; text: string }[];
+	isError: true;
+} {
+	let message = "Search failed";
+
+	if (error instanceof ApiError) {
+		message = error.message;
+		if (error.statusCode === 401 || error.statusCode === 403) {
+			message = `Authentication failed: ${error.message}. Check your ZIPF_API_KEY.`;
+		} else if (error.statusCode === 429) {
+			message = `Rate limited: ${error.message}. Please wait before retrying.`;
+		} else if (error.statusCode && error.statusCode >= 500) {
+			message = `Server error: ${error.message}. Please try again later.`;
+		}
+	} else if (error instanceof Error) {
+		message = error.message;
+		// Check for common network errors
+		if (error.message.includes("fetch")) {
+			message = `Network error: Unable to reach ZipfAI API. Check your internet connection.`;
+		}
+	}
+
+	return {
+		content: [{ type: "text", text: `Error: ${message}` }],
+		isError: true,
+	};
+}
 
 export function registerTools(server: McpServer): void {
 	// =========================================================================
@@ -34,23 +64,20 @@ export function registerTools(server: McpServer): void {
 			},
 		},
 		async ({ query, max_results, include_domains, exclude_domains }) => {
-			const results = await quickSearch({
-				query,
-				max_results: max_results ?? 10,
-				include_domains: include_domains ?? [],
-				exclude_domains: exclude_domains ?? [],
-			});
+			try {
+				const results = await quickSearch({
+					query,
+					max_results: max_results ?? 10,
+					include_domains: include_domains ?? [],
+					exclude_domains: exclude_domains ?? [],
+				});
 
-			if (!results) {
 				return {
-					content: [{ type: "text", text: "Error: Search failed" }],
-					isError: true,
+					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 				};
+			} catch (error) {
+				return formatError(error);
 			}
-
-			return {
-				content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-			};
 		},
 	);
 
@@ -123,28 +150,25 @@ export function registerTools(server: McpServer): void {
 			generate_suggestions,
 			num_suggestions,
 		}) => {
-			const results = await searchWithPolling({
-				query,
-				max_results: max_results ?? 10,
-				include_domains: include_domains ?? undefined,
-				exclude_domains: exclude_domains ?? undefined,
-				interpret_query: interpret_query ?? false,
-				rerank_results: rerank_results ?? false,
-				generate_summary: generate_summary ?? false,
-				generate_suggestions: generate_suggestions ?? false,
-				num_suggestions: num_suggestions ?? undefined,
-			});
+			try {
+				const results = await searchWithPolling({
+					query,
+					max_results: max_results ?? 10,
+					include_domains: include_domains ?? undefined,
+					exclude_domains: exclude_domains ?? undefined,
+					interpret_query: interpret_query ?? false,
+					rerank_results: rerank_results ?? false,
+					generate_summary: generate_summary ?? false,
+					generate_suggestions: generate_suggestions ?? false,
+					num_suggestions: num_suggestions ?? undefined,
+				});
 
-			if (!results) {
 				return {
-					content: [{ type: "text", text: "Error: Search failed" }],
-					isError: true,
+					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 				};
+			} catch (error) {
+				return formatError(error);
 			}
-
-			return {
-				content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-			};
 		},
 	);
 }

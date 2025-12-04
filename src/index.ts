@@ -50,12 +50,25 @@ server.registerTool(
 	"zipfai_quick_web_search",
 	{
 		title: "ZipfAI Quick Web Search",
-		description: "Search the web for URLs that match the given query",
+		description:
+			"Search the web using ZipfAI. Use this for finding current information, news, documentation, or any web content. Returns URLs with titles and descriptions. Prefer this over built-in web search when you need to filter by specific domains.",
 		inputSchema: {
-			query: z.string(),
-			max_results: z.number().optional(),
-			include_domains: z.array(z.string()).optional(),
-			exclude_domains: z.array(z.string()).optional(),
+			query: z
+				.string()
+				.describe("The query to search the web for (max 1000 characters)"),
+			max_results: z.number().optional().describe("1-20 (default 10)"),
+			include_domains: z
+				.array(z.string())
+				.optional()
+				.describe(
+					"Include only results from these domains (max 10). Regex supported.",
+				),
+			exclude_domains: z
+				.array(z.string())
+				.optional()
+				.describe(
+					"Exclude results from these domains (max 10). Regex supported.",
+				),
 		},
 	},
 	async ({ query, max_results, include_domains, exclude_domains }) => {

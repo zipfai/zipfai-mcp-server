@@ -1,0 +1,13 @@
+{
+  "name": "zipfai-web-search",
+  "version": "0.1.0",
+  "description": "Web search powered by ZipfAI - fast searches and AI-enhanced deep searches with summaries",
+  "author": {
+    "name": "ZipfAI",
+    "url": "https://github.com/zipfai"
+  },
+  "repository": "https://github.com/zipfai/zipfai-mcp-server",
+  "license": "MIT",
+  "keywords": ["search", "web", "ai", "zipfai"],
+  "mcpServers": "./../.mcp.json"
+}

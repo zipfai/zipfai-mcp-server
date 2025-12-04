@@ -1,11 +1,38 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import type { QuickSearchResponse, SearchJobResponse } from "./types.js";
 
 const ZIPF_API_BASE = "https://www.zipf.ai/api/v1";
 
+function getApiKey(): string {
+	// First try env var
+	if (process.env.ZIPF_API_KEY) {
+		return process.env.ZIPF_API_KEY;
+	}
+
+	// Fall back to config file
+	const configFile = resolve(homedir(), ".zipfai", "config.json");
+	if (existsSync(configFile)) {
+		try {
+			const config = JSON.parse(readFileSync(configFile, "utf-8"));
+			if (config.apiKey) {
+				return config.apiKey;
+			}
+		} catch {
+			// Ignore parse errors
+		}
+	}
+
+	throw new Error(
+		"ZIPF_API_KEY not found. Set it as an environment variable or run: npx zipfai-mcp-server install --api-key=<key>",
+	);
+}
+
 function getHeaders(): Record<string, string> {
 	return {
 		"Content-Type": "application/json",
-		Authorization: `Bearer ${process.env.ZIPF_API_KEY}`,
+		Authorization: `Bearer ${getApiKey()}`,
 	};
 }
 

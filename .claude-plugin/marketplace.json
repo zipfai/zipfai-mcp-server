@@ -1,0 +1,16 @@
+{
+  "name": "zipfai",
+  "owner": {
+    "name": "ZipfAI",
+    "email": "support@zipf.ai"
+  },
+  "plugins": [
+    {
+      "name": "zipfai-web-search",
+      "source": "./",
+      "description": "Web search powered by ZipfAI - fast searches and AI-enhanced deep searches with summaries",
+      "version": "0.1.0",
+      "keywords": ["search", "web", "ai"]
+    }
+  ]
+}

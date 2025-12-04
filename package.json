@@ -1,28 +1,46 @@
 {
   "name": "zipfai-mcp-server",
-  "version": "1.0.0",
-  "main": "index.js",
+  "version": "0.1.0",
+  "description": "ZipfAI web search MCP server for Claude Code",
+  "main": "build/index.js",
+  "type": "module",
+  "bin": {
+    "zipfai-mcp-server": "./build/cli.js"
+  },
   "scripts": {
-    "build": "tsc && chmod 755 build/index.js",
+    "build": "tsc && chmod 755 build/index.js build/cli.js",
+    "build_clean": "rm -rf build && tsc && chmod 755 build/index.js build/cli.js",
+    "clean": "rm -rf build",
     "lint": "biome check src/",
     "format": "biome format --write src/",
-    "check": "biome check --write src/"
+    "check": "biome check --write src/",
+    "prepublishOnly": "npm run build"
   },
   "files": [
-    "build"
+    "build",
+    ".claude-plugin",
+    ".mcp.json",
+    "skills"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zipfai/zipfai-mcp-server.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "mcp",
+    "claude",
+    "claude-code",
+    "search",
+    "web-search",
+    "zipfai",
+    "ai"
+  ],
+  "author": "ZipfAI",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/zipfai/zipfai-mcp-server/issues"
   },
   "homepage": "https://github.com/zipfai/zipfai-mcp-server#readme",
-  "description": "",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.24.3",
     "zod": "^3.25.76"

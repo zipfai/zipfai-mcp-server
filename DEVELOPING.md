@@ -54,7 +54,18 @@ This opens a browser UI where you can:
 
 ### With Claude Code
 
-1. Add to your project's `.mcp.json`:
+**Option 1: CLI install (recommended)**
+
+```bash
+npm run build
+node build/cli.js install --api-key=your-key
+```
+
+This registers the plugin with Claude Code and saves your API key to `~/.zipfai/config.json`.
+
+**Option 2: Manual .mcp.json**
+
+Add to your project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
@@ -69,14 +80,24 @@ This opens a browser UI where you can:
 }
 ```
 
-2. Restart Claude Code to pick up the new server.
+Then restart Claude Code to pick up the new server.
 
 ## Project Structure
 
 ```
 src/
-  index.ts    # Main server entry point
-build/        # Compiled JavaScript (git-ignored)
+  index.ts      # MCP server entry point
+  cli.ts        # CLI for install/uninstall commands
+  tools.ts      # MCP tool registrations (quick_search, search)
+  api.ts        # ZipfAI API calls and error handling
+  types.ts      # TypeScript interfaces for API responses
+.claude-plugin/
+  plugin.json       # Plugin metadata
+  marketplace.json  # Marketplace definition
+skills/
+  web-search/
+    SKILL.md    # Skill documentation for Claude
+build/          # Compiled JavaScript (git-ignored)
 ```
 
 ## Common Issues
@@ -88,3 +109,8 @@ build/        # Compiled JavaScript (git-ignored)
 **TypeScript errors after changing code**
 - Run `npm run build` to recompile
 - Check errors with `npx tsc --noEmit`
+
+**Uninstalling the plugin**
+```bash
+node build/cli.js uninstall
+```

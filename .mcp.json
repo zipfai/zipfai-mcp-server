@@ -2,10 +2,7 @@
   "mcpServers": {
     "zipfai": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/build/index.js"],
-      "env": {
-        "ZIPF_API_KEY": "${ZIPF_API_KEY}"
-      }
+      "args": ["${CLAUDE_PLUGIN_ROOT}/build/index.js"]
     }
   }
 }

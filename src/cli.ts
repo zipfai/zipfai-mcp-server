@@ -1,13 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import {
-	cpSync,
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,14 +9,9 @@ import { parseArgs } from "node:util";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-function getSourceRoot(): string {
-	// Go up from build/ to project root (where we're running from)
+function getPluginRoot(): string {
+	// Go up from build/ to project root
 	return resolve(__dirname, "..");
-}
-
-function getInstallDir(): string {
-	// Stable install location in user's home directory
-	return resolve(homedir(), ".zipfai", "plugin");
 }
 
 function runClaude(args: string[]): Promise<boolean> {
@@ -46,66 +35,17 @@ function saveApiKey(apiKey: string): void {
 	console.log(`API key saved to ${configFile}`);
 }
 
-function copyPluginFiles(): string {
-	const sourceRoot = getSourceRoot();
-	const installDir = getInstallDir();
-
-	console.log(`Copying plugin files to ${installDir}...`);
-
-	// Create install directory
-	if (!existsSync(installDir)) {
-		mkdirSync(installDir, { recursive: true });
-	}
-
-	// Copy build directory
-	cpSync(resolve(sourceRoot, "build"), resolve(installDir, "build"), {
-		recursive: true,
-	});
-
-	// Copy plugin config files
-	cpSync(
-		resolve(sourceRoot, ".claude-plugin"),
-		resolve(installDir, ".claude-plugin"),
-		{ recursive: true },
-	);
-
-	// Copy and update .mcp.json to use the install directory
-	const mcpConfig = JSON.parse(
-		readFileSync(resolve(sourceRoot, ".mcp.json"), "utf-8"),
-	);
-
-	// Update the path to point to installed location
-	if (mcpConfig.mcpServers?.zipfai?.args) {
-		mcpConfig.mcpServers.zipfai.args = [resolve(installDir, "build/index.js")];
-	}
-
-	writeFileSync(
-		resolve(installDir, ".mcp.json"),
-		JSON.stringify(mcpConfig, null, 2),
-	);
-
-	// Copy skills if they exist
-	const skillsDir = resolve(sourceRoot, "skills");
-	if (existsSync(skillsDir)) {
-		cpSync(skillsDir, resolve(installDir, "skills"), { recursive: true });
-	}
-
-	console.log("Plugin files copied successfully.");
-	return installDir;
-}
-
 async function install(apiKey: string): Promise<void> {
 	console.log("Installing ZipfAI plugin to Claude Code...\n");
 
 	// Save API key
 	saveApiKey(apiKey);
 
-	// Copy plugin files to stable location
-	const installDir = copyPluginFiles();
+	const pluginRoot = getPluginRoot();
 
 	// Step 1: Try to add marketplace (may already exist)
-	console.log("\nAdding ZipfAI marketplace...");
-	await runClaude(["plugin", "marketplace", "add", installDir]);
+	console.log("Adding ZipfAI marketplace...");
+	await runClaude(["plugin", "marketplace", "add", pluginRoot]);
 	// Ignore failure - marketplace might already exist
 
 	// Step 2: Install plugin from marketplace
@@ -118,7 +58,6 @@ async function install(apiKey: string): Promise<void> {
 
 	if (installSuccess) {
 		console.log("\nInstalled successfully!");
-		console.log(`Plugin installed to: ${installDir}`);
 		console.log("\nNext steps:");
 		console.log("  1. Restart Claude Code");
 		console.log('  2. Try: "Search for TypeScript best practices"');

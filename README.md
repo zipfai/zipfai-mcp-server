@@ -8,7 +8,8 @@ Web search powered by [ZipfAI](https://zipf.ai) for Claude Code. Provides fast w
 ```bash
 npm install
 npm run build
-node build/cli.js install --api-key=<>
+npx zipfai-mcp-server install --api-key=<>
+# npx zipfai-mcp-server uninstall to uninstall
 ```
 
 ### NPM Install

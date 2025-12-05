@@ -137,6 +137,12 @@ export function registerTools(server: McpServer): void {
 					.describe(
 						"Number of follow-up suggestions to generate, 1-10 (default: 5)",
 					),
+				extract_metadata: z
+					.boolean()
+					.optional()
+					.describe(
+						"Extract structured metadata from results (FREE, waits for completion)",
+					),
 			},
 		},
 		async ({
@@ -149,6 +155,7 @@ export function registerTools(server: McpServer): void {
 			generate_summary,
 			generate_suggestions,
 			num_suggestions,
+			extract_metadata,
 		}) => {
 			try {
 				const results = await searchWithPolling({
@@ -157,6 +164,7 @@ export function registerTools(server: McpServer): void {
 					include_domains: include_domains ?? undefined,
 					exclude_domains: exclude_domains ?? undefined,
 					interpret_query: interpret_query ?? false,
+					extract_metadata: extract_metadata ?? false,
 					rerank_results: rerank_results ?? false,
 					generate_summary: generate_summary ?? false,
 					generate_suggestions: generate_suggestions ?? false,

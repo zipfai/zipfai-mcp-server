@@ -43,8 +43,8 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 function getApiKey(): string {
-	// First try env var
-	if (process.env.ZIPF_API_KEY) {
+	// First try env var (check for non-empty string)
+	if (process.env.ZIPF_API_KEY && process.env.ZIPF_API_KEY.trim() !== "") {
 		return process.env.ZIPF_API_KEY;
 	}
 

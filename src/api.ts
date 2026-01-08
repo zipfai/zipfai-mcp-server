@@ -1,7 +1,30 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import type { QuickSearchResponse, SearchJobResponse } from "./types.js";
+import type {
+	AskResponse,
+	CrawlResponse,
+	CreateSessionResponse,
+	CreateWorkflowResponse,
+	ExecutionDiff,
+	ListWorkflowsResponse,
+	PlanWorkflowResponse,
+	QuickSearchResponse,
+	ResearchResponse,
+	SearchJobResponse,
+	Session,
+	SessionTimelineResponse,
+	StatusResponse,
+	SuggestSchemaResponse,
+	Workflow,
+	WorkflowDetailsResponse,
+	WorkflowDiffResponse,
+	WorkflowDigest,
+	WorkflowStep,
+	WorkflowStopCondition,
+	WorkflowTimelineResponse,
+	WorkflowUpdatesDigestResponse,
+} from "./types.js";
 
 const ZIPF_API_BASE = "https://www.zipf.ai/api/v1";
 
@@ -73,32 +96,61 @@ function getHeaders(): Record<string, string> {
 	};
 }
 
-// Quick Search - lightweight, fast
+// Helper to wait
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Default polling configuration
+const DEFAULT_POLL_CONFIG = {
+	initialInterval: 500, // Start with 500ms
+	maxInterval: 4000, // Cap at 4 seconds
+	backoffMultiplier: 1.5, // Increase by 50% each time
+	maxDuration: 60000, // 60 seconds total timeout
+};
+
+// Default timeout for individual fetch requests (in ms)
+const DEFAULT_FETCH_TIMEOUT = 30000; // 30 seconds
+
+// Helper to create AbortSignal with timeout
+function createTimeoutSignal(timeoutMs: number): AbortSignal {
+	const controller = new AbortController();
+	setTimeout(() => controller.abort(), timeoutMs);
+	return controller.signal;
+}
+
+// =========================================================================
+// Search API
+// =========================================================================
+
+// Quick Search - lightweight, fast (uses standard search endpoint with no AI features)
 export async function quickSearch(params: {
 	query: string;
 	max_results?: number;
-	include_domains?: string[];
-	exclude_domains?: string[];
 }): Promise<QuickSearchResponse> {
-	const response = await fetch(`${ZIPF_API_BASE}/search/quick`, {
+	// Use the standard /search endpoint with all AI features disabled
+	// This provides the same functionality as the deprecated /search/quick endpoint
+	const response = await fetch(`${ZIPF_API_BASE}/search`, {
 		method: "POST",
 		headers: getHeaders(),
 		body: JSON.stringify({
 			query: params.query,
 			max_results: params.max_results ?? 10,
-			include_domains: params.include_domains ?? [],
-			exclude_domains: params.exclude_domains ?? [],
+			// Disable all AI features for basic 1-credit search
+			interpret_query: false,
+			rerank_results: false,
+			extract_metadata: false,
+			generate_suggestions: false,
+			generate_summary: false,
 		}),
 	});
 	return handleResponse<QuickSearchResponse>(response);
 }
 
-// Full Search - with AI enhancements
+// Full Search - with AI enhancements and query decomposition
 async function search(params: {
 	query: string;
 	max_results?: number;
-	include_domains?: string[];
-	exclude_domains?: string[];
 	interpret_query?: boolean;
 	extract_metadata?: boolean;
 	rerank_results?: boolean;
@@ -106,6 +158,16 @@ async function search(params: {
 	suggestions_top_n?: number;
 	num_suggestions?: number;
 	generate_summary?: boolean;
+	// Query decomposition parameters
+	query_decomposition?: boolean;
+	max_sub_queries?: number;
+	max_results_per_sub_query?: number;
+	source_type?: "academic" | "commercial" | "news" | "community" | "mixed";
+	// Date range filter
+	freshness?: "day" | "week" | "month" | "year";
+	// Session context
+	session_id?: string;
+	filter_seen_urls?: boolean;
 }): Promise<SearchJobResponse> {
 	const response = await fetch(`${ZIPF_API_BASE}/search`, {
 		method: "POST",
@@ -113,8 +175,6 @@ async function search(params: {
 		body: JSON.stringify({
 			query: params.query,
 			max_results: params.max_results ?? 10,
-			include_domains: params.include_domains,
-			exclude_domains: params.exclude_domains,
 			interpret_query: params.interpret_query ?? false,
 			extract_metadata: params.extract_metadata ?? false,
 			rerank_results: params.rerank_results ?? false,
@@ -122,6 +182,16 @@ async function search(params: {
 			suggestions_top_n: params.suggestions_top_n,
 			num_suggestions: params.num_suggestions,
 			generate_summary: params.generate_summary ?? false,
+			// Query decomposition
+			query_decomposition: params.query_decomposition ?? false,
+			max_sub_queries: params.max_sub_queries,
+			max_results_per_sub_query: params.max_results_per_sub_query,
+			source_type: params.source_type,
+			// Date range filter
+			freshness: params.freshness,
+			// Session context
+			session_id: params.session_id,
+			filter_seen_urls: params.filter_seen_urls,
 		}),
 	});
 	return handleResponse<SearchJobResponse>(response);
@@ -152,25 +222,10 @@ async function getSearchJob(jobId: string): Promise<SearchJobResponse | null> {
 	}
 }
 
-// Helper to wait
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Polling configuration
-const POLL_CONFIG = {
-	initialInterval: 500, // Start with 500ms
-	maxInterval: 4000, // Cap at 4 seconds
-	backoffMultiplier: 1.5, // Increase by 50% each time
-	maxDuration: 60000, // 60 seconds total timeout
-};
-
 // Full Search with internal polling for async features
 export async function searchWithPolling(params: {
 	query: string;
 	max_results?: number;
-	include_domains?: string[];
-	exclude_domains?: string[];
 	interpret_query?: boolean;
 	extract_metadata?: boolean;
 	rerank_results?: boolean;
@@ -178,6 +233,18 @@ export async function searchWithPolling(params: {
 	suggestions_top_n?: number;
 	num_suggestions?: number;
 	generate_summary?: boolean;
+	// Query decomposition parameters
+	query_decomposition?: boolean;
+	max_sub_queries?: number;
+	max_results_per_sub_query?: number;
+	source_type?: "academic" | "commercial" | "news" | "community" | "mixed";
+	// Date range filter
+	freshness?: "day" | "week" | "month" | "year";
+	// Session context
+	session_id?: string;
+	filter_seen_urls?: boolean;
+	// Timeout configuration
+	timeout_ms?: number;
 }): Promise<SearchJobResponse> {
 	// Initial search request
 	const initialResult = await search(params);
@@ -188,13 +255,16 @@ export async function searchWithPolling(params: {
 		return initialResult;
 	}
 
+	// Use custom timeout or default
+	const maxDuration = params.timeout_ms ?? DEFAULT_POLL_CONFIG.maxDuration;
+
 	// Poll for async results (summary, metadata) with exponential backoff
 	const jobId = initialResult.search_job_id;
 	const startTime = Date.now();
-	let currentInterval = POLL_CONFIG.initialInterval;
+	let currentInterval = DEFAULT_POLL_CONFIG.initialInterval;
 	let lastSuccessfulJob: SearchJobResponse = initialResult;
 
-	while (Date.now() - startTime < POLL_CONFIG.maxDuration) {
+	while (Date.now() - startTime < maxDuration) {
 		await sleep(currentInterval);
 
 		const job = await getSearchJob(jobId);
@@ -212,9 +282,20 @@ export async function searchWithPolling(params: {
 			}
 
 			// Check if async features are complete
-			const summaryDone =
-				!params.generate_summary ||
-				(job.summary !== null && job.summary !== undefined);
+			// Summary can be: null, string (legacy), or { status: string, content?: string }
+			let summaryDone = !params.generate_summary;
+			if (params.generate_summary && job.summary) {
+				if (typeof job.summary === "string") {
+					// Legacy string format - summary is complete
+					summaryDone = true;
+				} else if (typeof job.summary === "object") {
+					// Object format with status field
+					summaryDone =
+						job.summary.status === "completed" ||
+						job.summary.status === "failed";
+				}
+			}
+
 			const metadataDone =
 				!params.extract_metadata ||
 				job.query_interpretation?.metadata_status === "completed" ||
@@ -227,14 +308,718 @@ export async function searchWithPolling(params: {
 
 		// Exponential backoff with cap
 		currentInterval = Math.min(
-			currentInterval * POLL_CONFIG.backoffMultiplier,
-			POLL_CONFIG.maxInterval,
+			currentInterval * DEFAULT_POLL_CONFIG.backoffMultiplier,
+			DEFAULT_POLL_CONFIG.maxInterval,
 		);
 	}
 
 	// Timeout - return the last successful response we got
 	console.error(
-		`Polling timeout after ${POLL_CONFIG.maxDuration}ms, returning partial results`,
+		`Polling timeout after ${maxDuration}ms, returning partial results`,
 	);
 	return lastSuccessfulJob;
+}
+
+// =========================================================================
+// Ask API - Direct question answering
+// =========================================================================
+
+export async function ask(params: {
+	question: string;
+	depth?: "quick" | "standard" | "deep";
+	max_sources?: number;
+	// Additional parameters
+	include_follow_ups?: boolean;
+	response_style?: "concise" | "detailed";
+	session_id?: string;
+	skip_rerank?: boolean;
+	enable_query_rewrite?: boolean;
+	enable_decomposition?: boolean;
+	max_sub_queries?: number;
+}): Promise<AskResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/ask`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify({
+			question: params.question,
+			depth: params.depth ?? "standard",
+			max_sources: params.max_sources ?? 10,
+			include_follow_ups: params.include_follow_ups,
+			response_style: params.response_style,
+			session_id: params.session_id,
+			skip_rerank: params.skip_rerank,
+			enable_query_rewrite: params.enable_query_rewrite,
+			enable_decomposition: params.enable_decomposition,
+			max_sub_queries: params.max_sub_queries,
+		}),
+	});
+	return handleResponse<AskResponse>(response);
+}
+
+// =========================================================================
+// Crawl API - Web crawling with extraction
+// =========================================================================
+
+export async function crawl(params: {
+	urls: string[];
+	max_pages?: number;
+	extraction_schema?: Record<string, string>;
+	classify_documents?: boolean;
+	generate_summary?: boolean;
+	processing_mode?: "sync" | "async" | "webhook";
+	webhook_url?: string;
+	// Link following
+	expansion?: "internal" | "external" | "both" | "none";
+	follow_links?: boolean;
+	link_extraction_config?: {
+		max_depth?: number;
+		url_patterns?: string[];
+		exclude_patterns?: string[];
+		detect_pagination?: boolean;
+	};
+	// Caching
+	use_cache?: boolean;
+	cache_max_age?: number;
+	// Budget control
+	budget_config?: {
+		max_pages?: number;
+		max_depth?: number;
+		max_credits?: number;
+	};
+	// Classifiers
+	classifiers?: Array<{
+		type: "url" | "content";
+		question: string;
+		confidence_threshold?: number;
+	}>;
+	// Dry run
+	dry_run?: boolean;
+	// Session context
+	session_id?: string;
+	filter_seen_urls?: boolean;
+}): Promise<CrawlResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/crawls`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify({
+			urls: params.urls,
+			max_pages: params.max_pages ?? 10,
+			extraction_schema: params.extraction_schema,
+			classify_documents: params.classify_documents ?? true,
+			generate_summary: params.generate_summary ?? false,
+			processing_mode: params.processing_mode ?? "sync",
+			webhook_url: params.webhook_url,
+			expansion: params.expansion,
+			follow_links: params.follow_links,
+			link_extraction_config: params.link_extraction_config,
+			use_cache: params.use_cache,
+			cache_max_age: params.cache_max_age,
+			budget_config: params.budget_config,
+			classifiers: params.classifiers,
+			dry_run: params.dry_run,
+			session_id: params.session_id,
+			filter_seen_urls: params.filter_seen_urls,
+		}),
+	});
+	return handleResponse<CrawlResponse>(response);
+}
+
+// Get Crawl Job status
+export async function getCrawl(crawlId: string): Promise<CrawlResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/crawls/${crawlId}`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse<CrawlResponse>(response);
+}
+
+// Crawl with polling for async mode
+export async function crawlWithPolling(params: {
+	urls: string[];
+	max_pages?: number;
+	extraction_schema?: Record<string, string>;
+	classify_documents?: boolean;
+	generate_summary?: boolean;
+	expansion?: "internal" | "external" | "both" | "none";
+	follow_links?: boolean;
+	link_extraction_config?: {
+		max_depth?: number;
+		url_patterns?: string[];
+		exclude_patterns?: string[];
+		detect_pagination?: boolean;
+	};
+	use_cache?: boolean;
+	cache_max_age?: number;
+	dry_run?: boolean;
+	session_id?: string;
+	filter_seen_urls?: boolean;
+}): Promise<CrawlResponse> {
+	// Use sync mode for simplicity - waits for completion
+	return crawl({ ...params, processing_mode: "sync" });
+}
+
+// Suggest extraction schema for a URL
+export async function suggestSchema(params: {
+	url: string;
+}): Promise<SuggestSchemaResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/crawls/suggest-schema`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify({
+			url: params.url,
+		}),
+	});
+	return handleResponse<SuggestSchemaResponse>(response);
+}
+
+// =========================================================================
+// Sessions API - Multi-step research workflows
+// =========================================================================
+
+export async function createSession(params: {
+	name: string;
+	description?: string;
+	intent_context?: string;
+	session_config?: {
+		auto_deduplicate?: boolean;
+		accumulate_context?: boolean;
+		use_session_context?: boolean;
+		max_operations?: number;
+	};
+	metadata?: Record<string, unknown>;
+}): Promise<CreateSessionResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/sessions`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify({
+			name: params.name,
+			description: params.description,
+			intent_context: params.intent_context,
+			session_config: params.session_config ?? {
+				auto_deduplicate: true,
+				accumulate_context: true,
+				use_session_context: true,
+			},
+			metadata: params.metadata,
+		}),
+	});
+	return handleResponse<CreateSessionResponse>(response);
+}
+
+export async function getSession(
+	sessionId: string,
+): Promise<{ session: Session }> {
+	const response = await fetch(`${ZIPF_API_BASE}/sessions/${sessionId}`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse<{ session: Session }>(response);
+}
+
+export async function getSessionTimeline(
+	sessionId: string,
+): Promise<SessionTimelineResponse> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/sessions/${sessionId}/timeline`,
+		{
+			method: "GET",
+			headers: getHeaders(),
+		},
+	);
+	return handleResponse<SessionTimelineResponse>(response);
+}
+
+export async function completeSession(
+	sessionId: string,
+): Promise<{ session: Session }> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/sessions/${sessionId}/complete`,
+		{
+			method: "POST",
+			headers: getHeaders(),
+		},
+	);
+	return handleResponse<{ session: Session }>(response);
+}
+
+// Session search - search within a session context
+export async function sessionSearch(
+	sessionId: string,
+	params: {
+		query: string;
+		max_results?: number;
+		filter_seen_urls?: boolean;
+		interpret_query?: boolean;
+		rerank_results?: boolean;
+		generate_summary?: boolean;
+		query_decomposition?: boolean;
+		max_sub_queries?: number;
+		freshness?: "day" | "week" | "month" | "year";
+	},
+): Promise<SearchJobResponse> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/sessions/${sessionId}/search`,
+		{
+			method: "POST",
+			headers: getHeaders(),
+			body: JSON.stringify({
+				query: params.query,
+				max_results: params.max_results ?? 10,
+				filter_seen_urls: params.filter_seen_urls ?? true,
+				interpret_query: params.interpret_query ?? false,
+				rerank_results: params.rerank_results ?? false,
+				generate_summary: params.generate_summary ?? false,
+				query_decomposition: params.query_decomposition ?? false,
+				max_sub_queries: params.max_sub_queries,
+				freshness: params.freshness,
+			}),
+		},
+	);
+	return handleResponse<SearchJobResponse>(response);
+}
+
+// Session crawl - crawl within a session context
+export async function sessionCrawl(
+	sessionId: string,
+	params: {
+		urls: string[];
+		max_pages?: number;
+		filter_seen_urls?: boolean;
+		extraction_schema?: Record<string, string>;
+		classify_documents?: boolean;
+		generate_summary?: boolean;
+	},
+): Promise<CrawlResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/sessions/${sessionId}/crawl`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify({
+			urls: params.urls,
+			max_pages: params.max_pages ?? 10,
+			filter_seen_urls: params.filter_seen_urls ?? true,
+			extraction_schema: params.extraction_schema,
+			classify_documents: params.classify_documents ?? true,
+			generate_summary: params.generate_summary ?? false,
+			processing_mode: "sync",
+		}),
+	});
+	return handleResponse<CrawlResponse>(response);
+}
+
+// =========================================================================
+// Research API - Combo search + auto-crawl
+// =========================================================================
+
+export async function research(params: {
+	query: string;
+	search_count?: number;
+	auto_crawl_top_n?: number;
+	max_pages_per_url?: number;
+	extraction_schema?: Record<string, string>;
+	// Additional parameters
+	only_uncrawled?: boolean;
+	classify_documents?: boolean;
+	interpret_query?: boolean;
+	rerank_results?: boolean;
+	generate_suggestions?: boolean;
+	session_id?: string;
+}): Promise<ResearchResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/research`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify({
+			query: params.query,
+			search_count: params.search_count ?? 10,
+			auto_crawl_top_n: params.auto_crawl_top_n ?? 5,
+			max_pages_per_url: params.max_pages_per_url ?? 1,
+			extraction_schema: params.extraction_schema,
+			only_uncrawled: params.only_uncrawled,
+			classify_documents: params.classify_documents,
+			interpret_query: params.interpret_query,
+			rerank_results: params.rerank_results,
+			generate_suggestions: params.generate_suggestions,
+			session_id: params.session_id,
+		}),
+	});
+	return handleResponse<ResearchResponse>(response);
+}
+
+// =========================================================================
+// Workflow API - Scheduled recurring monitoring
+// =========================================================================
+
+export async function createWorkflow(params: {
+	name: string;
+	mode?: "simple" | "multi_step" | "ai_planned";
+	workflow_type?: "search" | "crawl";
+	operation_config?: Record<string, unknown>;
+	steps?: WorkflowStep[];
+	intent?: string;
+	stop_condition: WorkflowStopCondition;
+	// Schedule options (priority: scheduled_for > cron_expression > interval)
+	interval?: string; // Human-readable: "6 hours", "1 day", "2 weeks"
+	interval_minutes?: number; // Legacy: raw minutes (one of interval or interval_minutes required)
+	cron_expression?: string; // Cron expression (5-field): "0 9 * * MON,WED,FRI"
+	scheduled_for?: string; // ISO 8601 datetime for one-time run
+	anchor_minute?: number; // Anchor minute (0-59) for aligned intervals
+	timezone?: string; // IANA timezone (default 'UTC')
+	max_executions?: number;
+	max_credits_per_execution?: number;
+	session_id?: string;
+}): Promise<CreateWorkflowResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse<CreateWorkflowResponse>(response);
+}
+
+export async function listWorkflows(params?: {
+	limit?: number;
+	offset?: number;
+	status?: "active" | "paused" | "completed" | "failed";
+}): Promise<ListWorkflowsResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.limit) searchParams.set("limit", params.limit.toString());
+	if (params?.offset) searchParams.set("offset", params.offset.toString());
+	if (params?.status) searchParams.set("status", params.status);
+
+	const response = await fetch(`${ZIPF_API_BASE}/workflows?${searchParams}`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse<ListWorkflowsResponse>(response);
+}
+
+export async function getWorkflow(
+	workflowId: string,
+): Promise<{ workflow: Workflow }> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse<{ workflow: Workflow }>(response);
+}
+
+export async function getWorkflowDetails(
+	workflowId: string,
+): Promise<WorkflowDetailsResponse> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/details`,
+		{
+			method: "GET",
+			headers: getHeaders(),
+		},
+	);
+	return handleResponse<WorkflowDetailsResponse>(response);
+}
+
+export async function updateWorkflow(
+	workflowId: string,
+	params: {
+		name?: string;
+		workflow_type?: "search" | "crawl";
+		operation_config?: Record<string, unknown>;
+		stop_condition?: WorkflowStopCondition;
+		// Schedule options (priority: scheduled_for > cron_expression > interval)
+		interval?: string; // Human-readable: "6 hours", "1 day", "2 weeks"
+		interval_minutes?: number; // Legacy: raw minutes
+		cron_expression?: string; // Cron expression (5-field): "0 9 * * MON,WED,FRI"
+		scheduled_for?: string; // ISO 8601 datetime for one-time run
+		anchor_minute?: number; // Anchor minute (0-59) for aligned intervals
+		timezone?: string; // IANA timezone (default 'UTC')
+		max_executions?: number;
+		status?: "active" | "paused" | "completed" | "failed";
+		session_id?: string | null;
+	},
+): Promise<{ workflow: Workflow }> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}`, {
+		method: "PATCH",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse<{ workflow: Workflow }>(response);
+}
+
+export async function executeWorkflow(
+	workflowId: string,
+): Promise<{ message: string; execution_id: string }> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/execute`,
+		{
+			method: "POST",
+			headers: getHeaders(),
+		},
+	);
+	return handleResponse<{ message: string; execution_id: string }>(response);
+}
+
+export async function getWorkflowTimeline(
+	workflowId: string,
+): Promise<WorkflowTimelineResponse> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/timeline`,
+		{
+			method: "GET",
+			headers: getHeaders(),
+		},
+	);
+	return handleResponse<WorkflowTimelineResponse>(response);
+}
+
+export async function getWorkflowDiff(
+	workflowId: string,
+	params?: {
+		limit?: number;
+		since?: string;
+	},
+): Promise<WorkflowDiffResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.limit) searchParams.set("limit", params.limit.toString());
+	if (params?.since) searchParams.set("since", params.since);
+
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/diff?${searchParams}`,
+		{
+			method: "GET",
+			headers: getHeaders(),
+		},
+	);
+	return handleResponse<WorkflowDiffResponse>(response);
+}
+
+export async function deleteWorkflow(
+	workflowId: string,
+): Promise<{ message: string }> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}`, {
+		method: "DELETE",
+		headers: getHeaders(),
+	});
+	return handleResponse<{ message: string }>(response);
+}
+
+export async function planWorkflow(params: {
+	intent: string;
+	name?: string;
+	max_credits_per_execution?: number;
+	skip_entity_discovery?: boolean;
+	advanced?: boolean | "quick" | "standard" | "thorough" | "comprehensive";
+}): Promise<PlanWorkflowResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/plan`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse<PlanWorkflowResponse>(response);
+}
+
+// =========================================================================
+// Workflow Updates Digest - Compound tool for consolidated updates
+// =========================================================================
+
+/**
+ * Helper function to generate a compact change summary from diff data
+ */
+function generateChangeSummary(diff: WorkflowDiffResponse): string {
+	// Use stats.change_rate for quick summary if available
+	if (diff.stats && diff.total_executions > 0) {
+		const changeRate = diff.stats.change_rate;
+		if (changeRate === 0) return "No changes detected";
+	}
+
+	// Check latest diff for detailed breakdown
+	if (!diff.diffs || diff.diffs.length === 0) return "No changes";
+
+	const latestDiff = diff.diffs[0];
+	if (!latestDiff.has_changes || !latestDiff.changes?.length) {
+		return "No changes detected";
+	}
+
+	// Group changes by type (changes is now an array of FieldChange objects)
+	const byType: Record<string, number> = {};
+	for (const change of latestDiff.changes) {
+		byType[change.change_type] = (byType[change.change_type] || 0) + 1;
+	}
+
+	const parts: string[] = [];
+	if (byType.added) parts.push(`+${byType.added} added`);
+	if (byType.removed) parts.push(`-${byType.removed} removed`);
+	if (byType.increase) parts.push(`↑${byType.increase} increased`);
+	if (byType.decrease) parts.push(`↓${byType.decrease} decreased`);
+	if (byType.status_change || byType.text_change) {
+		const textChanges = (byType.status_change || 0) + (byType.text_change || 0);
+		parts.push(`~${textChanges} modified`);
+	}
+
+	// Include human-readable summary from backend if available
+	if (latestDiff.summary && parts.length === 0) {
+		return latestDiff.summary;
+	}
+
+	return parts.join(", ") || "No changes";
+}
+
+/**
+ * Get a consolidated digest of all workflow updates since a given timestamp.
+ * This is a compound tool that aggregates list → timeline → diff for all workflows.
+ */
+export async function getWorkflowUpdatesDigest(params?: {
+	since?: string;
+	include_inactive?: boolean;
+	max_workflows?: number;
+	verbose?: boolean;
+}): Promise<WorkflowUpdatesDigestResponse> {
+	const since =
+		params?.since ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+	const includeInactive = params?.include_inactive ?? false;
+	const maxWorkflows = Math.min(params?.max_workflows ?? 20, 50);
+	const verbose = params?.verbose ?? false;
+
+	// Step 1: List all workflows
+	const workflows = await listWorkflows({
+		limit: maxWorkflows,
+		status: includeInactive ? undefined : "active",
+	});
+
+	if (!workflows.workflows || workflows.workflows.length === 0) {
+		return {
+			summary: "No workflows found.",
+			since: since,
+			checked_at: new Date().toISOString(),
+			total_workflows: 0,
+			workflows_with_changes: 0,
+			triggered_workflows: 0,
+			total_executions_since: 0,
+			workflows: [],
+		};
+	}
+
+	// Step 2: Fetch timeline and diff for each workflow in parallel
+	const workflowDigests = await Promise.all(
+		workflows.workflows.map(async (workflow): Promise<WorkflowDigest> => {
+			try {
+				// Fetch timeline (last few executions)
+				const timeline = await getWorkflowTimeline(workflow.id);
+
+				// Fetch diff since timestamp
+				const diff = await getWorkflowDiff(workflow.id, {
+					since: since,
+					limit: verbose ? 10 : 3,
+				});
+
+				// Find executions since the timestamp
+				const recentExecutions =
+					timeline.executions?.filter((exec) => {
+						const execTime = exec.completed_at || exec.started_at;
+						return execTime && new Date(execTime).getTime() > new Date(since).getTime();
+					}) || [];
+
+				const hasChanges = diff.diffs && diff.diffs.length > 0 && diff.diffs.some(d => d.has_changes);
+				const triggeredCondition =
+					workflow.status === "completed" &&
+					workflow.last_execution_at !== undefined &&
+					new Date(workflow.last_execution_at).getTime() > new Date(since).getTime();
+
+				const digest: WorkflowDigest = {
+					workflow_id: workflow.id,
+					workflow_name: workflow.name,
+					workflow_type: workflow.workflow_type,
+					workflow_mode: workflow.mode,
+					status: workflow.status,
+
+					// Activity summary
+					has_changes: hasChanges,
+					triggered_condition: triggeredCondition,
+					executions_since: recentExecutions.length,
+					last_execution_at: workflow.last_execution_at,
+					next_execution_at: workflow.next_execution_at,
+
+					// Change summary (compact)
+					change_summary: hasChanges
+						? generateChangeSummary(diff)
+						: "No changes detected",
+
+					// Stats from diff API
+					change_rate: diff.stats?.change_rate,
+				};
+
+				// Add verbose details if requested
+				if (verbose) {
+					digest.recent_diffs = diff.diffs?.slice(0, 3);
+					digest.recent_executions = recentExecutions.slice(0, 3);
+					if (diff.latest?.state) {
+						digest.latest_state = diff.latest.state;
+					}
+				}
+
+				return digest;
+			} catch (error) {
+				// If individual workflow fails, include error but don't fail entire digest
+				return {
+					workflow_id: workflow.id,
+					workflow_name: workflow.name,
+					status: workflow.status,
+					error: error instanceof Error ? error.message : "Failed to fetch updates",
+					has_changes: false,
+					triggered_condition: false,
+					executions_since: 0,
+					change_summary: "Error fetching updates",
+				};
+			}
+		}),
+	);
+
+	// Step 3: Sort by priority: triggered > has_changes > recent_execution
+	const sortedDigests = workflowDigests.sort((a, b) => {
+		if (a.triggered_condition !== b.triggered_condition)
+			return a.triggered_condition ? -1 : 1;
+		if (a.has_changes !== b.has_changes) return a.has_changes ? -1 : 1;
+		return (b.executions_since || 0) - (a.executions_since || 0);
+	});
+
+	// Step 4: Generate top-level summary
+	const workflowsWithChanges = sortedDigests.filter((w) => w.has_changes).length;
+	const triggeredWorkflowsList = sortedDigests.filter((w) => w.triggered_condition);
+	const totalExecutions = sortedDigests.reduce(
+		(sum, w) => sum + (w.executions_since || 0),
+		0,
+	);
+
+	let summary = "";
+	if (triggeredWorkflowsList.length > 0) {
+		summary += `🎯 ${triggeredWorkflowsList.length} workflow(s) triggered their stop condition! `;
+	}
+	if (workflowsWithChanges > 0) {
+		summary += `📊 ${workflowsWithChanges}/${sortedDigests.length} workflows have new changes. `;
+	}
+	if (totalExecutions > 0) {
+		summary += `⚡ ${totalExecutions} total executions since ${since}.`;
+	}
+	if (!summary) {
+		summary = `✓ All quiet. ${sortedDigests.length} workflows checked, no changes since ${since}.`;
+	}
+
+	return {
+		summary: summary.trim(),
+		since: since,
+		checked_at: new Date().toISOString(),
+		total_workflows: sortedDigests.length,
+		workflows_with_changes: workflowsWithChanges,
+		triggered_workflows: triggeredWorkflowsList.length,
+		total_executions_since: totalExecutions,
+		workflows: sortedDigests,
+	};
+}
+
+// =========================================================================
+// Status API - Health check and account info
+// =========================================================================
+
+export async function getStatus(): Promise<StatusResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse<StatusResponse>(response);
 }

@@ -1295,14 +1295,20 @@ export function registerTools(server: McpServer): void {
 
 Key benefits:
 - One call replaces N calls (list + timeline + diff for each)
-- Pre-sorted by priority: triggered first, then changed, then recent
+- Smart signal scoring (0-100) ranks workflows by importance: signal_score and signal_level (urgent/notable/routine/noise)
+- Pre-sorted by signal score: urgent first, then notable, then routine
+- Includes semantic URL summaries with titles, snippets, and published dates
+- Cross-workflow correlation: identifies shared URLs appearing across multiple monitors
 - Concise summaries optimized for AI agent consumption
 - Optional verbose mode for full diff details
 
+Signal scoring factors: stop condition triggers, document types (legal/academic/news), churn rate, new domains, extraction changes, workflow priority
+
 Recommended workflow:
 1. Call zipfai_workflow_updates to get overview
-2. For interesting workflows, use zipfai_workflow_diff for details
-3. Take action based on findings`,
+2. Check correlations array for cross-workflow patterns (URLs appearing in multiple monitors)
+3. Focus on urgent/notable workflows (signal_level)
+4. For interesting workflows, use zipfai_workflow_diff for details`,
 			inputSchema: {
 				since: z
 					.string()
@@ -1328,15 +1334,22 @@ Recommended workflow:
 					.describe(
 						"Include full diff details and execution history (default: false). Use when you need complete change history.",
 					),
+				format: z
+					.enum(["json", "briefing", "briefing_llm", "compact"])
+					.optional()
+					.describe(
+						"Output format: 'json' (default, full structured response), 'briefing' (markdown executive summary), 'briefing_llm' (LLM-synthesized briefing), 'compact' (minimal JSON with IDs and summaries only).",
+					),
 			},
 		},
-		async ({ since, include_inactive, max_workflows, verbose }) => {
+		async ({ since, include_inactive, max_workflows, verbose, format }) => {
 			try {
 				const result = await getWorkflowUpdatesDigest({
 					since: since ?? undefined,
 					include_inactive: include_inactive ?? undefined,
 					max_workflows: max_workflows ?? undefined,
 					verbose: verbose ?? undefined,
+					format: format ?? undefined,
 				});
 
 				return {

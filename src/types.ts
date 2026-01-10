@@ -448,6 +448,15 @@ export interface WorkflowDiffResponse {
 // Workflow Updates Digest Types (Compound Tool)
 // =========================================================================
 
+// Phase 1: Semantic URL summaries for enriched net_new_urls
+export interface NewUrlSummary {
+	url: string;
+	title?: string | null;
+	snippet?: string | null;
+	published_date?: string | null;
+	document_type?: string | null;
+}
+
 export interface WorkflowDigest {
 	workflow_id: string;
 	workflow_name: string;
@@ -468,6 +477,14 @@ export interface WorkflowDigest {
 	// Stats from diff API (quick access)
 	change_rate?: number;
 
+	// Phase 2: Signal/Noise scoring
+	signal_score?: number; // 0-100, higher = more important
+	signal_level?: SignalLevel; // urgent, notable, routine, noise
+	signal_reasoning?: string; // Brief explanation of the score
+
+	// Phase 1: Semantic URL summaries (enriched net_new_urls from extracted_state)
+	new_urls?: NewUrlSummary[];
+
 	// Verbose details (optional)
 	recent_diffs?: ExecutionDiff[];
 	recent_executions?: WorkflowExecution[];
@@ -475,6 +492,30 @@ export interface WorkflowDigest {
 
 	// Error handling
 	error?: string;
+}
+
+// Phase 4: Configurable digest formats
+export type DigestFormat = 'json' | 'briefing' | 'briefing_llm' | 'compact';
+
+// Phase 2: Signal/Noise scoring
+export type SignalLevel = 'urgent' | 'notable' | 'routine' | 'noise';
+
+// Phase 3: Cross-workflow correlation
+export interface CrossWorkflowCorrelation {
+	type: 'shared_url' | 'shared_topic' | 'shared_entity';
+	value: string; // URL or topic/entity name
+	workflows: {
+		workflow_id: string;
+		workflow_name: string;
+		context: string; // How it appeared in this workflow (snippet from Phase 1)
+	}[];
+	insight: string; // e.g., "Appears in 3 monitors: AI Safety, Congress AI, White House AI"
+}
+
+export interface CorrelationMetadata {
+	workflows_analyzed: number;
+	workflows_skipped: number; // If > MAX_WORKFLOWS_FOR_CORRELATION
+	total_urls_compared: number;
 }
 
 export interface WorkflowUpdatesDigestResponse {
@@ -486,6 +527,11 @@ export interface WorkflowUpdatesDigestResponse {
 	triggered_workflows: number;
 	total_executions_since: number;
 	workflows: WorkflowDigest[];
+	// Phase 4: Formatted output when briefing/compact format requested
+	formatted_output?: string;
+	// Phase 3: Cross-workflow correlation
+	correlations?: CrossWorkflowCorrelation[];
+	correlation_metadata?: CorrelationMetadata;
 }
 
 export interface PlanWorkflowResponse {

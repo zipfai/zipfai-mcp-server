@@ -882,7 +882,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_create_workflow",
 		{
 			description:
-				"Create a workflow for scheduled recurring monitoring (1-2 credits per execution). Supports search, crawl, or AI-planned multi-step workflows.",
+				"Create a workflow for scheduled recurring monitoring (1-2 credits per execution). Supports search, crawl, or AI-planned multi-step workflows. Email notifications are enabled by default (per-execution). Configure with email_notifications, email_per_execution, email_digest, and email_recipients parameters.",
 			inputSchema: {
 				name: z.string().describe("Workflow name"),
 				mode: z
@@ -967,6 +967,30 @@ export function registerTools(server: McpServer): void {
 					.number()
 					.optional()
 					.describe("Optional limit on total executions"),
+				email_notifications: z
+					.boolean()
+					.optional()
+					.describe(
+						"Enable email notifications for this workflow (default: true). Set to false to disable all emails.",
+					),
+				email_per_execution: z
+					.boolean()
+					.optional()
+					.describe(
+						"Send an email after each workflow execution (default: true when notifications enabled).",
+					),
+				email_digest: z
+					.enum(["none", "daily", "weekly"])
+					.optional()
+					.describe(
+						"Email digest frequency: 'none' (per-execution only), 'daily', or 'weekly'. Default: 'none'.",
+					),
+				email_recipients: z
+					.array(z.string())
+					.optional()
+					.describe(
+						"Custom email recipients (array of email addresses). If not provided, uses account email.",
+					),
 			},
 		},
 		async ({
@@ -986,6 +1010,10 @@ export function registerTools(server: McpServer): void {
 			anchor_minute,
 			timezone,
 			max_executions,
+			email_notifications,
+			email_per_execution,
+			email_digest,
+			email_recipients,
 		}) => {
 			try {
 				// Build stop condition from parameters
@@ -1006,6 +1034,27 @@ export function registerTools(server: McpServer): void {
 				}
 				if (stop_condition_operator) {
 					stopCondition.operator = stop_condition_operator;
+				}
+
+				// Build email config from parameters if any email settings provided
+				let emailConfig: {
+					enabled: boolean;
+					per_execution?: boolean;
+					digest?: "none" | "daily" | "weekly";
+					recipients?: string[] | null;
+				} | undefined = undefined;
+				if (
+					email_notifications !== undefined ||
+					email_per_execution !== undefined ||
+					email_digest !== undefined ||
+					email_recipients !== undefined
+				) {
+					emailConfig = {
+						enabled: email_notifications ?? true,
+						per_execution: email_per_execution ?? true,
+						digest: email_digest ?? "none",
+						recipients: email_recipients ?? null,
+					};
 				}
 
 				const result = await createWorkflow({
@@ -1030,6 +1079,7 @@ export function registerTools(server: McpServer): void {
 					anchor_minute: anchor_minute ?? undefined,
 					timezone: timezone ?? undefined,
 					max_executions: max_executions ?? undefined,
+					email_config: emailConfig,
 				});
 
 				return {
@@ -1112,7 +1162,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_update_workflow",
 		{
 			description:
-				"Update workflow parameters - name, query, interval, stop condition, or status (FREE).",
+				"Update workflow parameters - name, query, interval, stop condition, status, or email notifications (FREE). Use email_notifications, email_per_execution, email_digest, email_recipients to configure notifications, or disable_emails=true to turn off all notifications.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				name: z.string().optional().describe("New workflow name"),
@@ -1161,6 +1211,36 @@ export function registerTools(server: McpServer): void {
 					.enum(["active", "paused", "completed", "failed"])
 					.optional()
 					.describe("New status"),
+				email_notifications: z
+					.boolean()
+					.optional()
+					.describe(
+						"Enable/disable email notifications for this workflow.",
+					),
+				email_per_execution: z
+					.boolean()
+					.optional()
+					.describe(
+						"Enable/disable per-execution email notifications.",
+					),
+				email_digest: z
+					.enum(["none", "daily", "weekly"])
+					.optional()
+					.describe(
+						"Email digest frequency: 'none', 'daily', or 'weekly'.",
+					),
+				email_recipients: z
+					.array(z.string())
+					.optional()
+					.describe(
+						"Custom email recipients (array of email addresses). Set to empty array to use account email.",
+					),
+				disable_emails: z
+					.boolean()
+					.optional()
+					.describe(
+						"Set to true to completely disable email notifications (sets email_config to null).",
+					),
 			},
 		},
 		async ({
@@ -1175,8 +1255,44 @@ export function registerTools(server: McpServer): void {
 			timezone,
 			max_executions,
 			status,
+			email_notifications,
+			email_per_execution,
+			email_digest,
+			email_recipients,
+			disable_emails,
 		}) => {
 			try {
+				// Build email config if any email settings provided
+				let emailConfig:
+					| {
+							enabled: boolean;
+							per_execution?: boolean;
+							digest?: "none" | "daily" | "weekly";
+							recipients?: string[] | null;
+					  }
+					| null
+					| undefined = undefined;
+
+				if (disable_emails === true) {
+					// Explicitly disable all emails
+					emailConfig = null;
+				} else if (
+					email_notifications !== undefined ||
+					email_per_execution !== undefined ||
+					email_digest !== undefined ||
+					email_recipients !== undefined
+				) {
+					emailConfig = {
+						enabled: email_notifications ?? true,
+						per_execution: email_per_execution,
+						digest: email_digest,
+						recipients:
+							email_recipients && email_recipients.length > 0
+								? email_recipients
+								: null,
+					};
+				}
+
 				const result = await updateWorkflow(workflow_id, {
 					name: name ?? undefined,
 					operation_config: operation_config ?? undefined,
@@ -1188,6 +1304,7 @@ export function registerTools(server: McpServer): void {
 					timezone: timezone ?? undefined,
 					max_executions: max_executions ?? undefined,
 					status: status ?? undefined,
+					email_config: emailConfig,
 				});
 
 				return {

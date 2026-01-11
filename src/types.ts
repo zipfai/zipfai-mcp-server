@@ -259,6 +259,15 @@ export interface ResearchResponse {
 // =========================================================================
 // Workflow API Types
 // =========================================================================
+
+// Email configuration for workflow notifications
+export interface EmailConfig {
+	enabled: boolean;
+	per_execution?: boolean; // Send email after each execution
+	digest?: "none" | "daily" | "weekly"; // Digest frequency
+	recipients?: string[] | null; // Custom recipients (null = use account email)
+}
+
 export interface WorkflowStopCondition {
 	type:
 		| "result_count"
@@ -307,6 +316,7 @@ export interface Workflow {
 	next_execution_at?: string;
 	last_execution_at?: string;
 	session_id?: string;
+	email_config?: EmailConfig;
 	created_at?: string;
 	updated_at?: string;
 }

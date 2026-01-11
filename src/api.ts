@@ -6,6 +6,7 @@ import type {
 	CrawlResponse,
 	CreateSessionResponse,
 	CreateWorkflowResponse,
+	EmailConfig,
 	ExecutionDiff,
 	ListWorkflowsResponse,
 	PlanWorkflowResponse,
@@ -666,6 +667,8 @@ export async function createWorkflow(params: {
 	max_executions?: number;
 	max_credits_per_execution?: number;
 	session_id?: string;
+	// Email notification settings
+	email_config?: EmailConfig;
 }): Promise<CreateWorkflowResponse> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows`, {
 		method: "POST",
@@ -732,6 +735,8 @@ export async function updateWorkflow(
 		max_executions?: number;
 		status?: "active" | "paused" | "completed" | "failed";
 		session_id?: string | null;
+		// Email notification settings (null to disable)
+		email_config?: EmailConfig | null;
 	},
 ): Promise<{ workflow: Workflow }> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}`, {

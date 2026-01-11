@@ -268,27 +268,39 @@ export function registerTools(server: McpServer): void {
 				response_style: z
 					.enum(["concise", "detailed"])
 					.optional()
-					.describe("Answer length: concise (1-3 sentences) or detailed (full paragraph). Default: concise"),
+					.describe(
+						"Answer length: concise (1-3 sentences) or detailed (full paragraph). Default: concise",
+					),
 				session_id: z
 					.string()
 					.optional()
-					.describe("Link to a session for contextual rewrites. Enables follow-up questions that reference previous context."),
+					.describe(
+						"Link to a session for contextual rewrites. Enables follow-up questions that reference previous context.",
+					),
 				skip_rerank: z
 					.boolean()
 					.optional()
-					.describe("Skip result reranking (default: true - search engines rank well for factual QA)"),
+					.describe(
+						"Skip result reranking (default: true - search engines rank well for factual QA)",
+					),
 				enable_query_rewrite: z
 					.boolean()
 					.optional()
-					.describe("Enable LLM-based query rewriting for better search results (default: false)"),
+					.describe(
+						"Enable LLM-based query rewriting for better search results (default: false)",
+					),
 				enable_decomposition: z
 					.boolean()
 					.optional()
-					.describe("Enable query decomposition for comprehensive search (default: false)"),
+					.describe(
+						"Enable query decomposition for comprehensive search (default: false)",
+					),
 				max_sub_queries: z
 					.number()
 					.optional()
-					.describe("Max sub-queries when decomposition is enabled, 1-5 (default: 3)"),
+					.describe(
+						"Max sub-queries when decomposition is enabled, 1-5 (default: 3)",
+					),
 			},
 		},
 		async ({
@@ -366,23 +378,33 @@ export function registerTools(server: McpServer): void {
 				follow_links: z
 					.boolean()
 					.optional()
-					.describe("Enable link extraction and recursive crawling (legacy, prefer expansion)"),
+					.describe(
+						"Enable link extraction and recursive crawling (legacy, prefer expansion)",
+					),
 				use_cache: z
 					.boolean()
 					.optional()
-					.describe("Enable global crawl cache for 50% credit savings on cache hits (default: false)"),
+					.describe(
+						"Enable global crawl cache for 50% credit savings on cache hits (default: false)",
+					),
 				cache_max_age: z
 					.number()
 					.optional()
-					.describe("Maximum age in seconds for cached content (default: 86400 = 24 hours)"),
+					.describe(
+						"Maximum age in seconds for cached content (default: 86400 = 24 hours)",
+					),
 				dry_run: z
 					.boolean()
 					.optional()
-					.describe("Validate request and estimate credits without executing (default: false)"),
+					.describe(
+						"Validate request and estimate credits without executing (default: false)",
+					),
 				session_id: z
 					.string()
 					.optional()
-					.describe("Link this crawl to an existing session for URL deduplication"),
+					.describe(
+						"Link this crawl to an existing session for URL deduplication",
+					),
 			},
 		},
 		async ({
@@ -740,7 +762,9 @@ export function registerTools(server: McpServer): void {
 				classify_documents: z
 					.boolean()
 					.optional()
-					.describe("Enable AI document classification (default: true, triggers advanced pricing)"),
+					.describe(
+						"Enable AI document classification (default: true, triggers advanced pricing)",
+					),
 				interpret_query: z
 					.boolean()
 					.optional()
@@ -748,7 +772,9 @@ export function registerTools(server: McpServer): void {
 				rerank_results: z
 					.boolean()
 					.optional()
-					.describe("Enable semantic reranking to improve result relevance (+1 credit)"),
+					.describe(
+						"Enable semantic reranking to improve result relevance (+1 credit)",
+					),
 				generate_suggestions: z
 					.boolean()
 					.optional()
@@ -756,7 +782,9 @@ export function registerTools(server: McpServer): void {
 				session_id: z
 					.string()
 					.optional()
-					.describe("Link research to an existing session for context accumulation"),
+					.describe(
+						"Link research to an existing session for context accumulation",
+					),
 			},
 		},
 		async ({
@@ -835,7 +863,9 @@ export function registerTools(server: McpServer): void {
 				skip_entity_discovery: z
 					.boolean()
 					.optional()
-					.describe("Skip entity discovery for faster response (default: false)"),
+					.describe(
+						"Skip entity discovery for faster response (default: false)",
+					),
 				advanced: z
 					.union([
 						z.boolean(),
@@ -844,9 +874,9 @@ export function registerTools(server: McpServer): void {
 					.optional()
 					.describe(
 						"Enable advanced research before workflow generation. " +
-						"Set to true (uses 'standard' preset) or specify a preset: " +
-						"'quick' (~10 credits), 'standard' (~30 credits), 'thorough' (~50 credits), 'comprehensive' (~100 credits). " +
-						"Advanced research gathers real web data about entities and resolves URLs/addresses before generating the workflow.",
+							"Set to true (uses 'standard' preset) or specify a preset: " +
+							"'quick' (~10 credits), 'standard' (~30 credits), 'thorough' (~50 credits), 'comprehensive' (~100 credits). " +
+							"Advanced research gathers real web data about entities and resolves URLs/addresses before generating the workflow.",
 					),
 			},
 		},
@@ -991,6 +1021,12 @@ export function registerTools(server: McpServer): void {
 					.describe(
 						"Custom email recipients (array of email addresses). If not provided, uses account email.",
 					),
+				dry_run: z
+					.boolean()
+					.optional()
+					.describe(
+						"Preview cost estimate without creating workflow. Returns estimated credits per execution and balance check. For ai_planned mode, use zipfai_plan_workflow instead.",
+					),
 			},
 		},
 		async ({
@@ -1014,6 +1050,7 @@ export function registerTools(server: McpServer): void {
 			email_per_execution,
 			email_digest,
 			email_recipients,
+			dry_run,
 		}) => {
 			try {
 				// Build stop condition from parameters
@@ -1037,12 +1074,14 @@ export function registerTools(server: McpServer): void {
 				}
 
 				// Build email config from parameters if any email settings provided
-				let emailConfig: {
-					enabled: boolean;
-					per_execution?: boolean;
-					digest?: "none" | "daily" | "weekly";
-					recipients?: string[] | null;
-				} | undefined = undefined;
+				let emailConfig:
+					| {
+							enabled: boolean;
+							per_execution?: boolean;
+							digest?: "none" | "daily" | "weekly";
+							recipients?: string[] | null;
+					  }
+					| undefined;
 				if (
 					email_notifications !== undefined ||
 					email_per_execution !== undefined ||
@@ -1080,6 +1119,7 @@ export function registerTools(server: McpServer): void {
 					timezone: timezone ?? undefined,
 					max_executions: max_executions ?? undefined,
 					email_config: emailConfig,
+					dry_run: dry_run ?? undefined,
 				});
 
 				return {
@@ -1214,21 +1254,15 @@ export function registerTools(server: McpServer): void {
 				email_notifications: z
 					.boolean()
 					.optional()
-					.describe(
-						"Enable/disable email notifications for this workflow.",
-					),
+					.describe("Enable/disable email notifications for this workflow."),
 				email_per_execution: z
 					.boolean()
 					.optional()
-					.describe(
-						"Enable/disable per-execution email notifications.",
-					),
+					.describe("Enable/disable per-execution email notifications."),
 				email_digest: z
 					.enum(["none", "daily", "weekly"])
 					.optional()
-					.describe(
-						"Email digest frequency: 'none', 'daily', or 'weekly'.",
-					),
+					.describe("Email digest frequency: 'none', 'daily', or 'weekly'."),
 				email_recipients: z
 					.array(z.string())
 					.optional()
@@ -1271,7 +1305,7 @@ export function registerTools(server: McpServer): void {
 							recipients?: string[] | null;
 					  }
 					| null
-					| undefined = undefined;
+					| undefined;
 
 				if (disable_emails === true) {
 					// Explicitly disable all emails
@@ -1323,14 +1357,22 @@ export function registerTools(server: McpServer): void {
 		"zipfai_execute_workflow",
 		{
 			description:
-				"Execute a workflow immediately (1-2 credits). Does not affect regular schedule.",
+				"Execute a workflow immediately (1-2 credits). Does not affect regular schedule. Use dry_run to preview execution cost without actually running.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
+				dry_run: z
+					.boolean()
+					.optional()
+					.describe(
+						"Preview execution cost without running. Returns cost estimate based on workflow configuration.",
+					),
 			},
 		},
-		async ({ workflow_id }) => {
+		async ({ workflow_id, dry_run }) => {
 			try {
-				const result = await executeWorkflow(workflow_id);
+				const result = await executeWorkflow(workflow_id, {
+					dry_run: dry_run ?? undefined,
+				});
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -1484,8 +1526,7 @@ Recommended workflow:
 	server.registerTool(
 		"zipfai_delete_workflow",
 		{
-			description:
-				"Delete a workflow and stop scheduled executions (FREE).",
+			description: "Delete a workflow and stop scheduled executions (FREE).",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 			},

@@ -669,6 +669,8 @@ export async function createWorkflow(params: {
 	session_id?: string;
 	// Email notification settings
 	email_config?: EmailConfig;
+	// Dry run mode - preview cost without creating
+	dry_run?: boolean;
 }): Promise<CreateWorkflowResponse> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows`, {
 		method: "POST",
@@ -749,15 +751,27 @@ export async function updateWorkflow(
 
 export async function executeWorkflow(
 	workflowId: string,
-): Promise<{ message: string; execution_id: string }> {
+	options?: { dry_run?: boolean },
+): Promise<{
+	message: string;
+	execution_id?: string;
+	dry_run?: boolean;
+	cost_estimate?: unknown;
+}> {
 	const response = await fetch(
 		`${ZIPF_API_BASE}/workflows/${workflowId}/execute`,
 		{
 			method: "POST",
 			headers: getHeaders(),
+			body: options?.dry_run ? JSON.stringify({ dry_run: true }) : undefined,
 		},
 	);
-	return handleResponse<{ message: string; execution_id: string }>(response);
+	return handleResponse<{
+		message: string;
+		execution_id?: string;
+		dry_run?: boolean;
+		cost_estimate?: unknown;
+	}>(response);
 }
 
 export async function getWorkflowTimeline(
@@ -876,7 +890,7 @@ interface SignalScoringContext {
 	triggeredCondition: boolean;
 }
 
-type SignalLevel = 'urgent' | 'notable' | 'routine' | 'noise';
+type SignalLevel = "urgent" | "notable" | "routine" | "noise";
 
 function computeSignalScore(ctx: SignalScoringContext): {
 	score: number;
@@ -887,43 +901,52 @@ function computeSignalScore(ctx: SignalScoringContext): {
 	const reasons: string[] = [];
 
 	// 1. User-defined priority from workflow config (operation_config.priority)
-	const priority = ctx.workflow.operation_config?.priority as string | undefined;
-	if (priority === 'high') {
+	const priority = ctx.workflow.operation_config?.priority as
+		| string
+		| undefined;
+	if (priority === "high") {
 		score += 25;
-		reasons.push('high-priority workflow');
-	} else if (priority === 'low') {
+		reasons.push("high-priority workflow");
+	} else if (priority === "low") {
 		score -= 15;
-		reasons.push('low-priority workflow');
+		reasons.push("low-priority workflow");
 	}
 
 	// 2. Stop condition triggered or proximity
 	if (ctx.triggeredCondition) {
 		score += 30;
-		reasons.push('stop condition triggered');
+		reasons.push("stop condition triggered");
 	}
 
 	// 3. High-signal document types in new URLs
-	const highSignalDocTypes = ['legal_regulatory', 'academic_research', 'news_editorial', 'government'];
-	const hasHighSignalDocs = ctx.newUrls?.some(u =>
-		u.document_type && highSignalDocTypes.includes(u.document_type)
+	const highSignalDocTypes = [
+		"legal_regulatory",
+		"academic_research",
+		"news_editorial",
+		"government",
+	];
+	const hasHighSignalDocs = ctx.newUrls?.some(
+		(u) => u.document_type && highSignalDocTypes.includes(u.document_type),
 	);
 	if (hasHighSignalDocs) {
 		score += 20;
-		reasons.push('contains regulatory/academic/news content');
+		reasons.push("contains regulatory/academic/news content");
 	}
 
 	// 4. Penalize high churn (likely noise from search result shuffling)
 	const churnRate = ctx.diff.stats?.change_rate || 0;
 	if (churnRate > 50) {
 		score -= 15;
-		reasons.push('high churn rate');
+		reasons.push("high churn rate");
 	} else if (churnRate > 0 && churnRate <= 20) {
 		// Low churn is a good signal - meaningful targeted changes
 		score += 5;
 	}
 
 	// 5. New domain discovery (novel sources)
-	const latestState = ctx.diff.latest?.state as Record<string, unknown> | undefined;
+	const latestState = ctx.diff.latest?.state as
+		| Record<string, unknown>
+		| undefined;
 	const newDomains = latestState?.new_domains_count as number | undefined;
 	if (newDomains && newDomains > 0) {
 		score += 10;
@@ -931,10 +954,12 @@ function computeSignalScore(ctx: SignalScoringContext): {
 	}
 
 	// 6. Extraction field changes (crawl workflows with data changes)
-	const extractionChanges = latestState?.extraction_changes as unknown[] | undefined;
+	const extractionChanges = latestState?.extraction_changes as
+		| unknown[]
+		| undefined;
 	if (extractionChanges && extractionChanges.length > 0) {
 		score += 15;
-		reasons.push('extraction data changed');
+		reasons.push("extraction data changed");
 	}
 
 	// 7. Number of new URLs - many new URLs suggests significant activity
@@ -952,19 +977,19 @@ function computeSignalScore(ctx: SignalScoringContext): {
 	// Determine signal level
 	let level: SignalLevel;
 	if (score >= 80) {
-		level = 'urgent';
+		level = "urgent";
 	} else if (score >= 60) {
-		level = 'notable';
+		level = "notable";
 	} else if (score >= 40) {
-		level = 'routine';
+		level = "routine";
 	} else {
-		level = 'noise';
+		level = "noise";
 	}
 
 	return {
 		score,
 		level,
-		reasoning: reasons.length > 0 ? reasons.join(', ') : 'baseline activity',
+		reasoning: reasons.length > 0 ? reasons.join(", ") : "baseline activity",
 	};
 }
 
@@ -975,18 +1000,27 @@ function computeSignalScore(ctx: SignalScoringContext): {
 function normalizeUrl(url: string): string {
 	try {
 		const u = new URL(url);
-		u.protocol = 'https:'; // Normalize http → https
-		u.hash = ''; // Remove fragments
+		u.protocol = "https:"; // Normalize http → https
+		u.hash = ""; // Remove fragments
 
 		// Remove common tracking params
 		const trackingParams = [
-			'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
-			'ref', 'source', 'fbclid', 'gclid', 'mc_cid', 'mc_eid'
+			"utm_source",
+			"utm_medium",
+			"utm_campaign",
+			"utm_term",
+			"utm_content",
+			"ref",
+			"source",
+			"fbclid",
+			"gclid",
+			"mc_cid",
+			"mc_eid",
 		];
-		trackingParams.forEach(p => u.searchParams.delete(p));
+		trackingParams.forEach((p) => u.searchParams.delete(p));
 
 		// Normalize trailing slash (remove unless it's just "/")
-		if (u.pathname.endsWith('/') && u.pathname !== '/') {
+		if (u.pathname.endsWith("/") && u.pathname !== "/") {
 			u.pathname = u.pathname.slice(0, -1);
 		}
 
@@ -1003,7 +1037,7 @@ function normalizeUrl(url: string): string {
 const MAX_WORKFLOWS_FOR_CORRELATION = 15;
 
 interface CrossWorkflowCorrelation {
-	type: 'shared_url' | 'shared_topic' | 'shared_entity';
+	type: "shared_url" | "shared_topic" | "shared_entity";
 	value: string;
 	workflows: {
 		workflow_id: string;
@@ -1023,10 +1057,14 @@ function findCorrelations(digests: WorkflowDigest[]): {
 } {
 	// Rate limit: only analyze workflows with changes and new_urls
 	const eligibleDigests = digests
-		.filter(d => d.has_changes && d.new_urls && d.new_urls.length > 0)
+		.filter((d) => d.has_changes && d.new_urls && d.new_urls.length > 0)
 		.slice(0, MAX_WORKFLOWS_FOR_CORRELATION);
 
-	const workflowsSkipped = Math.max(0, digests.filter(d => d.has_changes && d.new_urls && d.new_urls.length > 0).length - MAX_WORKFLOWS_FOR_CORRELATION);
+	const workflowsSkipped = Math.max(
+		0,
+		digests.filter((d) => d.has_changes && d.new_urls && d.new_urls.length > 0)
+			.length - MAX_WORKFLOWS_FOR_CORRELATION,
+	);
 
 	// If less than 2 eligible workflows, no correlation possible
 	if (eligibleDigests.length < 2) {
@@ -1035,16 +1073,22 @@ function findCorrelations(digests: WorkflowDigest[]): {
 			metadata: {
 				workflows_analyzed: eligibleDigests.length,
 				workflows_skipped: workflowsSkipped,
-				total_urls_compared: eligibleDigests.reduce((sum, d) => sum + (d.new_urls?.length || 0), 0),
+				total_urls_compared: eligibleDigests.reduce(
+					(sum, d) => sum + (d.new_urls?.length || 0),
+					0,
+				),
 			},
 		};
 	}
 
 	// Build URL → workflow mapping
-	const urlToWorkflows = new Map<string, {
-		digest: WorkflowDigest;
-		urlObj: { url: string; snippet?: string | null };
-	}[]>();
+	const urlToWorkflows = new Map<
+		string,
+		{
+			digest: WorkflowDigest;
+			urlObj: { url: string; snippet?: string | null };
+		}[]
+	>();
 
 	let totalUrlsCompared = 0;
 
@@ -1063,16 +1107,16 @@ function findCorrelations(digests: WorkflowDigest[]): {
 
 	for (const [url, workflowList] of urlToWorkflows) {
 		if (workflowList.length >= 2) {
-			const workflowNames = workflowList.map(w => w.digest.workflow_name);
+			const workflowNames = workflowList.map((w) => w.digest.workflow_name);
 			correlations.push({
-				type: 'shared_url',
+				type: "shared_url",
 				value: url,
-				workflows: workflowList.map(w => ({
+				workflows: workflowList.map((w) => ({
 					workflow_id: w.digest.workflow_id,
 					workflow_name: w.digest.workflow_name,
-					context: w.urlObj.snippet || '',
+					context: w.urlObj.snippet || "",
 				})),
-				insight: `Appears in ${workflowList.length} monitors: ${workflowNames.join(', ')}`,
+				insight: `Appears in ${workflowList.length} monitors: ${workflowNames.join(", ")}`,
 			});
 		}
 	}
@@ -1099,14 +1143,14 @@ export async function getWorkflowUpdatesDigest(params?: {
 	include_inactive?: boolean;
 	max_workflows?: number;
 	verbose?: boolean;
-	format?: 'json' | 'briefing' | 'briefing_llm' | 'compact';
+	format?: "json" | "briefing" | "briefing_llm" | "compact";
 }): Promise<WorkflowUpdatesDigestResponse> {
 	const since =
 		params?.since ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 	const includeInactive = params?.include_inactive ?? false;
 	const maxWorkflows = Math.min(params?.max_workflows ?? 20, 50);
 	const verbose = params?.verbose ?? false;
-	const format = params?.format ?? 'json';
+	const format = params?.format ?? "json";
 
 	// Step 1: List all workflows
 	const workflows = await listWorkflows({
@@ -1144,14 +1188,21 @@ export async function getWorkflowUpdatesDigest(params?: {
 				const recentExecutions =
 					timeline.executions?.filter((exec) => {
 						const execTime = exec.completed_at || exec.started_at;
-						return execTime && new Date(execTime).getTime() > new Date(since).getTime();
+						return (
+							execTime &&
+							new Date(execTime).getTime() > new Date(since).getTime()
+						);
 					}) || [];
 
-				const hasChanges = diff.diffs && diff.diffs.length > 0 && diff.diffs.some(d => d.has_changes);
+				const hasChanges =
+					diff.diffs &&
+					diff.diffs.length > 0 &&
+					diff.diffs.some((d) => d.has_changes);
 				const triggeredCondition =
 					workflow.status === "completed" &&
 					workflow.last_execution_at !== undefined &&
-					new Date(workflow.last_execution_at).getTime() > new Date(since).getTime();
+					new Date(workflow.last_execution_at).getTime() >
+						new Date(since).getTime();
 
 				const digest: WorkflowDigest = {
 					workflow_id: workflow.id,
@@ -1178,12 +1229,23 @@ export async function getWorkflowUpdatesDigest(params?: {
 
 				// Phase 1: Extract enriched new_urls from latest state
 				// Handle backward compatibility with string URLs from old executions
-				const latestState = diff.latest?.state as Record<string, unknown> | undefined;
-				if (latestState?.net_new_urls && Array.isArray(latestState.net_new_urls)) {
+				const latestState = diff.latest?.state as
+					| Record<string, unknown>
+					| undefined;
+				if (
+					latestState?.net_new_urls &&
+					Array.isArray(latestState.net_new_urls)
+				) {
 					digest.new_urls = latestState.net_new_urls.map((u: unknown) =>
-						typeof u === 'string'
+						typeof u === "string"
 							? { url: u } // Backward compatibility: string → object
-							: (u as { url: string; title?: string; snippet?: string; published_date?: string; document_type?: string })
+							: (u as {
+									url: string;
+									title?: string;
+									snippet?: string;
+									published_date?: string;
+									document_type?: string;
+								}),
 					);
 				}
 
@@ -1214,7 +1276,8 @@ export async function getWorkflowUpdatesDigest(params?: {
 					workflow_id: workflow.id,
 					workflow_name: workflow.name,
 					status: workflow.status,
-					error: error instanceof Error ? error.message : "Failed to fetch updates",
+					error:
+						error instanceof Error ? error.message : "Failed to fetch updates",
 					has_changes: false,
 					triggered_condition: false,
 					executions_since: 0,
@@ -1236,11 +1299,16 @@ export async function getWorkflowUpdatesDigest(params?: {
 	});
 
 	// Phase 3: Find cross-workflow correlations
-	const { correlations, metadata: correlationMetadata } = findCorrelations(sortedDigests);
+	const { correlations, metadata: correlationMetadata } =
+		findCorrelations(sortedDigests);
 
 	// Step 4: Generate top-level summary
-	const workflowsWithChanges = sortedDigests.filter((w) => w.has_changes).length;
-	const triggeredWorkflowsList = sortedDigests.filter((w) => w.triggered_condition);
+	const workflowsWithChanges = sortedDigests.filter(
+		(w) => w.has_changes,
+	).length;
+	const triggeredWorkflowsList = sortedDigests.filter(
+		(w) => w.triggered_condition,
+	);
 	const totalExecutions = sortedDigests.reduce(
 		(sum, w) => sum + (w.executions_since || 0),
 		0,
@@ -1275,13 +1343,13 @@ export async function getWorkflowUpdatesDigest(params?: {
 	};
 
 	// Phase 4: Generate formatted output based on format parameter
-	if (format === 'briefing' || format === 'briefing_llm') {
+	if (format === "briefing" || format === "briefing_llm") {
 		const formattedOutput = generateBriefingMarkdown(
 			sortedDigests,
 			triggeredWorkflowsList,
 			workflowsWithChanges,
 			since,
-			correlations
+			correlations,
 		);
 		return {
 			...baseResponse,
@@ -1289,9 +1357,9 @@ export async function getWorkflowUpdatesDigest(params?: {
 		};
 	}
 
-	if (format === 'compact') {
+	if (format === "compact") {
 		// Compact format: strip verbose details, keep only essential info
-		const compactWorkflows = sortedDigests.map(w => ({
+		const compactWorkflows = sortedDigests.map((w) => ({
 			workflow_id: w.workflow_id,
 			workflow_name: w.workflow_name,
 			status: w.status,
@@ -1320,40 +1388,42 @@ function generateBriefingMarkdown(
 	triggeredWorkflows: WorkflowDigest[],
 	workflowsWithChanges: number,
 	since: string,
-	correlations: CrossWorkflowCorrelation[] = []
+	correlations: CrossWorkflowCorrelation[] = [],
 ): string {
-	const date = new Date().toISOString().split('T')[0];
-	const lines: string[] = [`# Workflow Updates - ${date}`, ''];
+	const date = new Date().toISOString().split("T")[0];
+	const lines: string[] = [`# Workflow Updates - ${date}`, ""];
 
 	// Handle zero-changes case
 	if (workflowsWithChanges === 0 && triggeredWorkflows.length === 0) {
-		lines.push('## All Quiet');
-		lines.push('');
-		lines.push(`No significant changes detected across your ${digests.length} active monitors.`);
-		lines.push('');
-		lines.push('Last execution times:');
+		lines.push("## All Quiet");
+		lines.push("");
+		lines.push(
+			`No significant changes detected across your ${digests.length} active monitors.`,
+		);
+		lines.push("");
+		lines.push("Last execution times:");
 		for (const digest of digests.slice(0, 5)) {
 			const timeAgo = digest.last_execution_at
 				? formatTimeAgo(new Date(digest.last_execution_at))
-				: 'Never';
+				: "Never";
 			lines.push(`- ${digest.workflow_name}: ${timeAgo}`);
 		}
 		if (digests.length > 5) {
 			lines.push(`- ... and ${digests.length - 5} more`);
 		}
-		return lines.join('\n');
+		return lines.join("\n");
 	}
 
 	// Phase 2: Group workflows by signal level (using computed signal_level)
-	const urgent = digests.filter(d => d.signal_level === 'urgent');
-	const notable = digests.filter(d => d.signal_level === 'notable');
-	const routine = digests.filter(d => d.signal_level === 'routine');
-	const noise = digests.filter(d => d.signal_level === 'noise');
+	const urgent = digests.filter((d) => d.signal_level === "urgent");
+	const notable = digests.filter((d) => d.signal_level === "notable");
+	const routine = digests.filter((d) => d.signal_level === "routine");
+	const noise = digests.filter((d) => d.signal_level === "noise");
 
 	// Urgent section
 	if (urgent.length > 0) {
 		lines.push(`## Urgent (${urgent.length})`);
-		lines.push('');
+		lines.push("");
 		for (const digest of urgent) {
 			lines.push(`### ${digest.workflow_name}`);
 			if (digest.triggered_condition) {
@@ -1364,20 +1434,20 @@ function generateBriefingMarkdown(
 				lines.push(`*Signal: ${digest.signal_reasoning}*`);
 			}
 			if (digest.new_urls && digest.new_urls.length > 0) {
-				lines.push('');
+				lines.push("");
 				for (const urlObj of digest.new_urls.slice(0, 3)) {
-					const title = urlObj.title || 'Link';
+					const title = urlObj.title || "Link";
 					lines.push(`- [${title}](${urlObj.url})`);
 				}
 			}
-			lines.push('');
+			lines.push("");
 		}
 	}
 
 	// Notable section
 	if (notable.length > 0) {
 		lines.push(`## Notable (${notable.length})`);
-		lines.push('');
+		lines.push("");
 		for (const digest of notable) {
 			lines.push(`### ${digest.workflow_name}`);
 			lines.push(digest.change_summary);
@@ -1385,9 +1455,11 @@ function generateBriefingMarkdown(
 				const urlCount = digest.new_urls.length;
 				const titles = digest.new_urls
 					.slice(0, 3)
-					.map(u => u.title || u.url.split('/').pop())
-					.join(', ');
-				lines.push(`**New findings:** ${titles}${urlCount > 3 ? ` (+${urlCount - 3} more)` : ''}`);
+					.map((u) => u.title || u.url.split("/").pop())
+					.join(", ");
+				lines.push(
+					`**New findings:** ${titles}${urlCount > 3 ? ` (+${urlCount - 3} more)` : ""}`,
+				);
 			}
 			if (digest.signal_reasoning) {
 				lines.push(`*Signal: ${digest.signal_reasoning}*`);
@@ -1395,54 +1467,56 @@ function generateBriefingMarkdown(
 			if (digest.change_rate !== undefined) {
 				lines.push(`Churn: ${digest.change_rate}%`);
 			}
-			lines.push('');
+			lines.push("");
 		}
 	}
 
 	// Routine section (condensed)
 	if (routine.length > 0) {
 		lines.push(`## Routine (${routine.length})`);
-		lines.push('');
+		lines.push("");
 		lines.push(`${routine.length} workflows with routine activity:`);
-		lines.push(routine.map(d => d.workflow_name).join(', '));
-		lines.push('');
+		lines.push(routine.map((d) => d.workflow_name).join(", "));
+		lines.push("");
 	}
 
 	// Noise section (very condensed)
 	if (noise.length > 0) {
 		lines.push(`## Low Signal (${noise.length})`);
-		lines.push('');
-		lines.push(`${noise.length} workflows with low-signal activity (likely churn):`);
-		lines.push(noise.map(d => d.workflow_name).join(', '));
-		lines.push('');
+		lines.push("");
+		lines.push(
+			`${noise.length} workflows with low-signal activity (likely churn):`,
+		);
+		lines.push(noise.map((d) => d.workflow_name).join(", "));
+		lines.push("");
 	}
 
 	// Phase 3: Cross-workflow correlations section
 	if (correlations.length > 0) {
 		lines.push(`## Cross-Workflow Patterns (${correlations.length})`);
-		lines.push('');
-		lines.push('URLs appearing across multiple monitors:');
-		lines.push('');
+		lines.push("");
+		lines.push("URLs appearing across multiple monitors:");
+		lines.push("");
 		for (const correlation of correlations.slice(0, 5)) {
-			const workflowNames = correlation.workflows.map(w => w.workflow_name);
+			const workflowNames = correlation.workflows.map((w) => w.workflow_name);
 			// Extract domain from URL for cleaner display
-			let domain = '';
+			let domain = "";
 			try {
 				domain = new URL(correlation.value).hostname;
 			} catch {
 				domain = correlation.value;
 			}
 			lines.push(`- **${domain}** (${correlation.workflows.length} monitors)`);
-			lines.push(`  - ${workflowNames.join(', ')}`);
+			lines.push(`  - ${workflowNames.join(", ")}`);
 			lines.push(`  - [View page](${correlation.value})`);
 		}
 		if (correlations.length > 5) {
 			lines.push(`- ... and ${correlations.length - 5} more shared URLs`);
 		}
-		lines.push('');
+		lines.push("");
 	}
 
-	return lines.join('\n');
+	return lines.join("\n");
 }
 
 /**
@@ -1455,9 +1529,11 @@ function formatTimeAgo(date: Date): string {
 	const diffHours = Math.floor(diffMins / 60);
 	const diffDays = Math.floor(diffHours / 24);
 
-	if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
-	if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-	return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+	if (diffMins < 60)
+		return `${diffMins} minute${diffMins !== 1 ? "s" : ""} ago`;
+	if (diffHours < 24)
+		return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
+	return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
 }
 
 // =========================================================================

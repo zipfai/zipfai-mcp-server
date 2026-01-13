@@ -4,17 +4,31 @@ import { resolve } from "node:path";
 import type {
 	AskResponse,
 	CrawlResponse,
+	CreateEntitySchemaResponse,
+	CreateEntitySignalResponse,
 	CreateSessionResponse,
 	CreateWorkflowResponse,
 	EmailConfig,
+	Entity,
+	EntityLifecycleConfig,
+	EntitySchema,
+	EntitySignal,
+	EntityStatus,
 	ExecutionDiff,
+	ExportEntitiesResponse,
+	ListEntitiesResponse,
+	ListEntitySchemasResponse,
+	ListEntitySignalsResponse,
 	ListWorkflowsResponse,
 	PlanWorkflowResponse,
+	QueryEntitiesResponse,
 	QuickSearchResponse,
 	ResearchResponse,
 	SearchJobResponse,
 	Session,
 	SessionTimelineResponse,
+	SignalAction,
+	SignalCondition,
 	StatusResponse,
 	SuggestSchemaResponse,
 	Workflow,
@@ -1534,6 +1548,229 @@ function formatTimeAgo(date: Date): string {
 	if (diffHours < 24)
 		return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
 	return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
+}
+
+// =========================================================================
+// Entity API - Persistent entity tracking
+// =========================================================================
+
+export async function listEntitySchemas(): Promise<ListEntitySchemasResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/entity-schemas`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse<ListEntitySchemasResponse>(response);
+}
+
+export async function createEntitySchema(params: {
+	name: string;
+	display_name?: string;
+	description?: string;
+	dedup_key: string[];
+	fields: Record<string, { type: string; description?: string; required?: boolean }>;
+	lifecycle_config?: EntityLifecycleConfig;
+}): Promise<CreateEntitySchemaResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/entity-schemas`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse<CreateEntitySchemaResponse>(response);
+}
+
+export async function getEntitySchema(name: string): Promise<{ schema: EntitySchema }> {
+	const response = await fetch(`${ZIPF_API_BASE}/entity-schemas/${name}`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse<{ schema: EntitySchema }>(response);
+}
+
+export async function deleteEntitySchema(name: string): Promise<{ message: string }> {
+	const response = await fetch(`${ZIPF_API_BASE}/entity-schemas/${name}`, {
+		method: "DELETE",
+		headers: getHeaders(),
+	});
+	return handleResponse<{ message: string }>(response);
+}
+
+export async function listEntities(
+	schemaName: string,
+	params?: {
+		status?: EntityStatus;
+		limit?: number;
+		offset?: number;
+		sort_by?: 'first_seen_at' | 'last_seen_at' | 'created_at' | 'times_seen';
+		sort_order?: 'asc' | 'desc';
+		filter?: Record<string, unknown>;
+	}
+): Promise<ListEntitiesResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.status) searchParams.set("status", params.status);
+	if (params?.limit) searchParams.set("limit", params.limit.toString());
+	if (params?.offset) searchParams.set("offset", params.offset.toString());
+	if (params?.sort_by) searchParams.set("sort_by", params.sort_by);
+	if (params?.sort_order) searchParams.set("sort_order", params.sort_order);
+	if (params?.filter) searchParams.set("filter", JSON.stringify(params.filter));
+
+	const response = await fetch(
+		`${ZIPF_API_BASE}/entities/${schemaName}?${searchParams}`,
+		{
+			method: "GET",
+			headers: getHeaders(),
+		}
+	);
+	return handleResponse<ListEntitiesResponse>(response);
+}
+
+export async function queryEntities(
+	schemaName: string,
+	params: {
+		filter?: Record<string, unknown>;
+		aggregations?: Array<{
+			type: 'count' | 'count_by' | 'timeline';
+			field?: string;
+			interval?: 'day' | 'week' | 'month';
+			date_field?: 'created_at' | 'first_seen_at' | 'last_seen_at';
+			days_back?: number;
+		}>;
+		limit?: number;
+		offset?: number;
+	}
+): Promise<QueryEntitiesResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/entities/${schemaName}`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse<QueryEntitiesResponse>(response);
+}
+
+export async function getEntity(
+	schemaName: string,
+	entityId: string
+): Promise<{ entity: Entity }> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/entities/${schemaName}/${entityId}`,
+		{
+			method: "GET",
+			headers: getHeaders(),
+		}
+	);
+	return handleResponse<{ entity: Entity }>(response);
+}
+
+export async function updateEntity(
+	schemaName: string,
+	entityId: string,
+	params: {
+		data?: Record<string, unknown>;
+		status?: EntityStatus;
+	}
+): Promise<{ entity: Entity }> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/entities/${schemaName}/${entityId}`,
+		{
+			method: "PATCH",
+			headers: getHeaders(),
+			body: JSON.stringify(params),
+		}
+	);
+	return handleResponse<{ entity: Entity }>(response);
+}
+
+export async function exportEntities(
+	schemaName: string,
+	params?: {
+		format?: 'json' | 'csv';
+		status?: EntityStatus;
+		limit?: number;
+		fields?: string[];
+	}
+): Promise<ExportEntitiesResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.format) searchParams.set("format", params.format);
+	if (params?.status) searchParams.set("status", params.status);
+	if (params?.limit) searchParams.set("limit", params.limit.toString());
+	if (params?.fields) searchParams.set("fields", params.fields.join(","));
+
+	const response = await fetch(
+		`${ZIPF_API_BASE}/entities/${schemaName}/export?${searchParams}`,
+		{
+			method: "GET",
+			headers: getHeaders(),
+		}
+	);
+	return handleResponse<ExportEntitiesResponse>(response);
+}
+
+// Entity Signals
+
+export async function listEntitySignals(params?: {
+	schema_id?: string;
+	is_active?: boolean;
+}): Promise<ListEntitySignalsResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.schema_id) searchParams.set("schema_id", params.schema_id);
+	if (params?.is_active !== undefined) searchParams.set("is_active", params.is_active.toString());
+
+	const response = await fetch(
+		`${ZIPF_API_BASE}/entity-signals?${searchParams}`,
+		{
+			method: "GET",
+			headers: getHeaders(),
+		}
+	);
+	return handleResponse<ListEntitySignalsResponse>(response);
+}
+
+export async function createEntitySignal(params: {
+	schema_id: string;
+	name: string;
+	description?: string;
+	condition_config: SignalCondition;
+	actions_config: SignalAction[];
+}): Promise<CreateEntitySignalResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/entity-signals`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse<CreateEntitySignalResponse>(response);
+}
+
+export async function getEntitySignal(signalId: string): Promise<{ signal: EntitySignal }> {
+	const response = await fetch(`${ZIPF_API_BASE}/entity-signals/${signalId}`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse<{ signal: EntitySignal }>(response);
+}
+
+export async function updateEntitySignal(
+	signalId: string,
+	params: {
+		name?: string;
+		description?: string;
+		condition_config?: SignalCondition;
+		actions_config?: SignalAction[];
+		is_active?: boolean;
+	}
+): Promise<{ signal: EntitySignal }> {
+	const response = await fetch(`${ZIPF_API_BASE}/entity-signals/${signalId}`, {
+		method: "PATCH",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse<{ signal: EntitySignal }>(response);
+}
+
+export async function deleteEntitySignal(signalId: string): Promise<{ message: string }> {
+	const response = await fetch(`${ZIPF_API_BASE}/entity-signals/${signalId}`, {
+		method: "DELETE",
+		headers: getHeaders(),
+	});
+	return handleResponse<{ message: string }>(response);
 }
 
 // =========================================================================

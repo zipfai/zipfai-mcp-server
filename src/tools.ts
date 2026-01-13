@@ -5,23 +5,37 @@ import {
 	ask,
 	completeSession,
 	crawlWithPolling,
+	createEntitySchema,
+	createEntitySignal,
 	createSession,
 	createWorkflow,
+	deleteEntitySchema,
+	deleteEntitySignal,
 	deleteWorkflow,
 	executeWorkflow,
+	exportEntities,
+	getEntity,
+	getEntitySchema,
+	getEntitySignal,
 	getSessionTimeline,
 	getStatus,
 	getWorkflowDetails,
 	getWorkflowDiff,
 	getWorkflowTimeline,
 	getWorkflowUpdatesDigest,
+	listEntities,
+	listEntitySchemas,
+	listEntitySignals,
 	listWorkflows,
 	planWorkflow,
+	queryEntities,
 	research,
 	searchWithPolling,
 	sessionCrawl,
 	sessionSearch,
 	suggestSchema,
+	updateEntity,
+	updateEntitySignal,
 	updateWorkflow,
 } from "./api.js";
 
@@ -1535,6 +1549,585 @@ Recommended workflow:
 			try {
 				const result = await deleteWorkflow(workflow_id);
 
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Entity Schema APIs
+	// =========================================================================
+
+	server.registerTool(
+		"zipfai_list_entity_schemas",
+		{
+			description:
+				"List all entity schemas (FREE). Entity schemas define the structure of tracked items like job postings, products, or companies.",
+			inputSchema: {},
+		},
+		async () => {
+			try {
+				const result = await listEntitySchemas();
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_create_entity_schema",
+		{
+			description:
+				"Create a new entity schema (FREE). Define the structure for tracking entities like job postings, products, or companies with automatic deduplication and lifecycle management.",
+			inputSchema: {
+				name: z
+					.string()
+					.describe(
+						"Unique identifier for the schema (snake_case, e.g., 'job_posting')",
+					),
+				display_name: z
+					.string()
+					.optional()
+					.describe("Human-readable name (e.g., 'Job Posting')"),
+				description: z.string().optional().describe("Schema description"),
+				dedup_key: z
+					.array(z.string())
+					.describe(
+						"Array of field names used for deduplication (e.g., ['company', 'title', 'location'])",
+					),
+				fields: z
+					.record(
+						z.object({
+							type: z
+								.enum([
+									"string",
+									"number",
+									"boolean",
+									"date",
+									"array",
+									"object",
+									"url",
+									"email",
+								])
+								.describe("Field type"),
+							description: z.string().optional().describe("Field description"),
+							required: z.boolean().optional().describe("Whether the field is required"),
+						}),
+					)
+					.describe(
+						"Field definitions mapping field names to their configurations",
+					),
+				stale_after_days: z
+					.number()
+					.optional()
+					.describe("Mark entities as stale after N days without being seen"),
+				auto_close_after_days: z
+					.number()
+					.optional()
+					.describe("Auto-close entities after N days stale"),
+			},
+		},
+		async ({
+			name,
+			display_name,
+			description,
+			dedup_key,
+			fields,
+			stale_after_days,
+			auto_close_after_days,
+		}) => {
+			try {
+				const lifecycle_config =
+					stale_after_days || auto_close_after_days
+						? {
+								track_first_seen: true,
+								track_last_seen: true,
+								stale_after_days,
+								auto_close_after_days,
+						  }
+						: undefined;
+
+				const result = await createEntitySchema({
+					name,
+					display_name,
+					description,
+					dedup_key,
+					fields,
+					lifecycle_config,
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_get_entity_schema",
+		{
+			description: "Get entity schema details by name (FREE).",
+			inputSchema: {
+				name: z.string().describe("Schema name (e.g., 'job_posting')"),
+			},
+		},
+		async ({ name }) => {
+			try {
+				const result = await getEntitySchema(name);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_delete_entity_schema",
+		{
+			description:
+				"Delete an entity schema and all associated entities (FREE). WARNING: This permanently deletes all entities in this schema.",
+			inputSchema: {
+				name: z.string().describe("Schema name to delete"),
+			},
+		},
+		async ({ name }) => {
+			try {
+				const result = await deleteEntitySchema(name);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Entity APIs
+	// =========================================================================
+
+	server.registerTool(
+		"zipfai_list_entities",
+		{
+			description:
+				"List entities in a schema (FREE). Filter by status, sort by various fields.",
+			inputSchema: {
+				schema_name: z.string().describe("Schema name (e.g., 'job_posting')"),
+				status: z
+					.enum(["active", "stale", "closed"])
+					.optional()
+					.describe("Filter by entity status"),
+				limit: z
+					.number()
+					.optional()
+					.describe("Number of results, 1-100 (default: 20)"),
+				offset: z.number().optional().describe("Pagination offset"),
+				sort_by: z
+					.enum(["first_seen_at", "last_seen_at", "created_at", "times_seen"])
+					.optional()
+					.describe("Sort field"),
+				sort_order: z
+					.enum(["asc", "desc"])
+					.optional()
+					.describe("Sort order (default: desc)"),
+			},
+		},
+		async ({ schema_name, status, limit, offset, sort_by, sort_order }) => {
+			try {
+				const result = await listEntities(schema_name, {
+					status,
+					limit,
+					offset,
+					sort_by,
+					sort_order,
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_query_entities",
+		{
+			description:
+				"Query entities with aggregations (1 credit). Get counts, group by field, or timeline analysis.",
+			inputSchema: {
+				schema_name: z.string().describe("Schema name (e.g., 'job_posting')"),
+				filter: z
+					.record(z.unknown())
+					.optional()
+					.describe("Field filters as JSON object"),
+				aggregation_type: z
+					.enum(["count", "count_by", "timeline"])
+					.optional()
+					.describe("Type of aggregation to perform"),
+				aggregation_field: z
+					.string()
+					.optional()
+					.describe("Field to group by (for count_by aggregation)"),
+				timeline_interval: z
+					.enum(["day", "week", "month"])
+					.optional()
+					.describe("Interval for timeline aggregation"),
+				days_back: z
+					.number()
+					.optional()
+					.describe("Days to look back for timeline (default: 30, max: 365)"),
+				limit: z.number().optional().describe("Number of results (default: 20)"),
+				offset: z.number().optional().describe("Pagination offset"),
+			},
+		},
+		async ({
+			schema_name,
+			filter,
+			aggregation_type,
+			aggregation_field,
+			timeline_interval,
+			days_back,
+			limit,
+			offset,
+		}) => {
+			try {
+				const aggregations = aggregation_type
+					? [
+							{
+								type: aggregation_type,
+								field: aggregation_field,
+								interval: timeline_interval,
+								days_back,
+							},
+					  ]
+					: undefined;
+
+				const result = await queryEntities(schema_name, {
+					filter,
+					aggregations,
+					limit,
+					offset,
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_get_entity",
+		{
+			description: "Get a specific entity by ID (FREE).",
+			inputSchema: {
+				schema_name: z.string().describe("Schema name"),
+				entity_id: z.string().describe("Entity ID"),
+			},
+		},
+		async ({ schema_name, entity_id }) => {
+			try {
+				const result = await getEntity(schema_name, entity_id);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_update_entity",
+		{
+			description: "Update entity data or status (FREE).",
+			inputSchema: {
+				schema_name: z.string().describe("Schema name"),
+				entity_id: z.string().describe("Entity ID"),
+				data: z
+					.record(z.unknown())
+					.optional()
+					.describe("Updated field values (merged with existing)"),
+				status: z
+					.enum(["active", "stale", "closed"])
+					.optional()
+					.describe("New entity status"),
+			},
+		},
+		async ({ schema_name, entity_id, data, status }) => {
+			try {
+				const result = await updateEntity(schema_name, entity_id, {
+					data,
+					status,
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_export_entities",
+		{
+			description: "Export entities as JSON or CSV (1 credit).",
+			inputSchema: {
+				schema_name: z.string().describe("Schema name"),
+				format: z
+					.enum(["json", "csv"])
+					.optional()
+					.describe("Export format (default: json)"),
+				status: z
+					.enum(["active", "stale", "closed"])
+					.optional()
+					.describe("Filter by status"),
+				limit: z
+					.number()
+					.optional()
+					.describe("Max entities to export (default: 1000, max: 10000)"),
+				fields: z
+					.array(z.string())
+					.optional()
+					.describe("Specific data fields to include"),
+			},
+		},
+		async ({ schema_name, format, status, limit, fields }) => {
+			try {
+				const result = await exportEntities(schema_name, {
+					format,
+					status,
+					limit,
+					fields,
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Entity Signal APIs
+	// =========================================================================
+
+	server.registerTool(
+		"zipfai_list_entity_signals",
+		{
+			description:
+				"List all entity signals (FREE). Signals are alerting rules that trigger on entity changes.",
+			inputSchema: {
+				schema_id: z.string().optional().describe("Filter by schema ID"),
+				is_active: z.boolean().optional().describe("Filter by active status"),
+			},
+		},
+		async ({ schema_id, is_active }) => {
+			try {
+				const result = await listEntitySignals({
+					schema_id,
+					is_active,
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_create_entity_signal",
+		{
+			description:
+				"Create an entity signal for alerting (FREE). Signals trigger actions when conditions are met on entities.",
+			inputSchema: {
+				schema_id: z.string().describe("Entity schema ID"),
+				name: z.string().describe("Signal name"),
+				description: z.string().optional().describe("Signal description"),
+				condition_type: z
+					.enum([
+						"new_entity",
+						"entity_closed",
+						"entity_updated",
+						"field_value",
+						"population_change",
+						"threshold",
+						"custom",
+					])
+					.describe("Type of condition that triggers the signal"),
+				condition_field: z
+					.string()
+					.optional()
+					.describe("Field to evaluate (for field_value conditions)"),
+				condition_operator: z
+					.enum(["=", "!=", ">", "<", ">=", "<=", "contains", "matches"])
+					.optional()
+					.describe("Comparison operator"),
+				condition_value: z
+					.unknown()
+					.optional()
+					.describe("Value to compare against"),
+				condition_threshold: z
+					.number()
+					.optional()
+					.describe("Threshold for population_change/threshold conditions"),
+				action_type: z
+					.enum(["email", "webhook", "slack", "log"])
+					.describe("Type of action to perform when triggered"),
+				action_recipients: z
+					.array(z.string())
+					.optional()
+					.describe("Email recipients (for email action)"),
+				action_webhook_url: z
+					.string()
+					.optional()
+					.describe("Webhook URL (for webhook action)"),
+				action_slack_channel: z
+					.string()
+					.optional()
+					.describe("Slack channel (for slack action)"),
+			},
+		},
+		async ({
+			schema_id,
+			name,
+			description,
+			condition_type,
+			condition_field,
+			condition_operator,
+			condition_value,
+			condition_threshold,
+			action_type,
+			action_recipients,
+			action_webhook_url,
+			action_slack_channel,
+		}) => {
+			try {
+				// Build condition config with proper type
+				const condition: {
+					type:
+						| "new_entity"
+						| "entity_closed"
+						| "entity_updated"
+						| "field_value"
+						| "population_change"
+						| "threshold"
+						| "custom";
+					field?: string;
+					operator?: "=" | "!=" | ">" | "<" | ">=" | "<=" | "contains" | "matches";
+					value?: unknown;
+					threshold?: number;
+				} = { type: condition_type };
+				if (condition_field) condition.field = condition_field;
+				if (condition_operator) condition.operator = condition_operator;
+				if (condition_value !== undefined) condition.value = condition_value;
+				if (condition_threshold !== undefined)
+					condition.threshold = condition_threshold;
+
+				// Build action config
+				const actionConfig: {
+					recipients?: string[];
+					url?: string;
+					method?: "POST" | "PUT";
+					channel?: string;
+				} = {};
+				if (action_recipients) actionConfig.recipients = action_recipients;
+				if (action_webhook_url) {
+					actionConfig.url = action_webhook_url;
+					actionConfig.method = "POST";
+				}
+				if (action_slack_channel) actionConfig.channel = action_slack_channel;
+
+				const result = await createEntitySignal({
+					schema_id,
+					name,
+					description,
+					condition_config: condition,
+					actions_config: [{ type: action_type, config: actionConfig }],
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_get_entity_signal",
+		{
+			description: "Get entity signal details (FREE).",
+			inputSchema: {
+				signal_id: z.string().describe("Signal ID"),
+			},
+		},
+		async ({ signal_id }) => {
+			try {
+				const result = await getEntitySignal(signal_id);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_update_entity_signal",
+		{
+			description: "Update entity signal configuration (FREE).",
+			inputSchema: {
+				signal_id: z.string().describe("Signal ID"),
+				name: z.string().optional().describe("New signal name"),
+				description: z.string().optional().describe("New description"),
+				is_active: z.boolean().optional().describe("Enable or disable the signal"),
+			},
+		},
+		async ({ signal_id, name, description, is_active }) => {
+			try {
+				const result = await updateEntitySignal(signal_id, {
+					name,
+					description,
+					is_active,
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"zipfai_delete_entity_signal",
+		{
+			description: "Delete an entity signal (FREE).",
+			inputSchema: {
+				signal_id: z.string().describe("Signal ID to delete"),
+			},
+		},
+		async ({ signal_id }) => {
+			try {
+				const result = await deleteEntitySignal(signal_id);
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};

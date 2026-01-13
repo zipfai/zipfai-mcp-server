@@ -553,6 +553,164 @@ export interface PlanWorkflowResponse {
 }
 
 // =========================================================================
+// Entity API Types
+// =========================================================================
+
+export type EntityFieldType = 'string' | 'number' | 'boolean' | 'date' | 'array' | 'object' | 'url' | 'email';
+
+export interface EntityFieldDefinition {
+	name: string;
+	type: EntityFieldType;
+	description?: string;
+	required?: boolean;
+	default_value?: unknown;
+	validation?: {
+		pattern?: string;
+		min?: number;
+		max?: number;
+		enum?: string[];
+	};
+}
+
+export interface EntityLifecycleConfig {
+	track_first_seen?: boolean;
+	track_last_seen?: boolean;
+	stale_after_days?: number;
+	auto_close_after_days?: number;
+}
+
+export interface EntitySchema {
+	id: string;
+	customer_id: string;
+	name: string;
+	display_name?: string;
+	description?: string;
+	dedup_key: string[];
+	fields: Record<string, EntityFieldDefinition>;
+	lifecycle_config?: EntityLifecycleConfig;
+	created_at: string;
+	updated_at: string;
+}
+
+export type EntityStatus = 'active' | 'stale' | 'closed';
+
+export interface Entity {
+	id: string;
+	customer_id: string;
+	schema_id: string;
+	dedup_hash: string;
+	data: Record<string, unknown>;
+	classifications: Record<string, string | string[]>;
+	status: EntityStatus;
+	first_seen_at: string;
+	last_seen_at: string;
+	closed_at?: string;
+	times_seen: number;
+	source_workflow_id?: string;
+	source_url?: string;
+	source_execution_id?: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export type SignalConditionType =
+	| 'new_entity'
+	| 'entity_closed'
+	| 'entity_updated'
+	| 'field_value'
+	| 'population_change'
+	| 'threshold'
+	| 'custom';
+
+export type SignalActionType = 'email' | 'webhook' | 'slack' | 'log';
+
+export interface SignalCondition {
+	type: SignalConditionType;
+	field?: string;
+	operator?: '=' | '!=' | '>' | '<' | '>=' | '<=' | 'contains' | 'matches';
+	value?: unknown;
+	threshold?: number;
+	natural_language?: string;
+}
+
+export interface SignalAction {
+	type: SignalActionType;
+	config: {
+		recipients?: string[];
+		subject_template?: string;
+		body_template?: string;
+		url?: string;
+		method?: 'POST' | 'PUT';
+		headers?: Record<string, string>;
+		channel?: string;
+		message_template?: string;
+		message?: string;
+	};
+}
+
+export interface EntitySignal {
+	id: string;
+	customer_id: string;
+	schema_id: string;
+	name: string;
+	description?: string;
+	condition_config: SignalCondition;
+	actions_config: SignalAction[];
+	is_active: boolean;
+	last_evaluated_at?: string;
+	last_triggered_at?: string;
+	trigger_count: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ListEntitySchemasResponse {
+	schemas: EntitySchema[];
+	total: number;
+}
+
+export interface CreateEntitySchemaResponse {
+	schema: EntitySchema;
+}
+
+export interface ListEntitiesResponse {
+	schema_name: string;
+	entities: Entity[];
+	total: number;
+	limit: number;
+	offset: number;
+	has_more: boolean;
+}
+
+export interface QueryEntitiesResponse {
+	schema_name: string;
+	entities: Entity[];
+	total: number;
+	aggregations?: {
+		type: string;
+		results: Record<string, number> | Array<{ date: string; count: number }>;
+	}[];
+	credits: CreditsInfo;
+}
+
+export interface ExportEntitiesResponse {
+	// Export returns raw data (JSON array or CSV string)
+	data: Entity[] | string;
+	format: 'json' | 'csv';
+	count: number;
+	credits: CreditsInfo;
+}
+
+export interface ListEntitySignalsResponse {
+	signals: EntitySignal[];
+	total: number;
+}
+
+export interface CreateEntitySignalResponse {
+	signal: EntitySignal;
+}
+
+// =========================================================================
 // Status API Types
 // =========================================================================
 export interface StatusResponse {

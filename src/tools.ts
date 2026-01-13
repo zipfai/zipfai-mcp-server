@@ -1619,6 +1619,7 @@ Recommended workflow:
 								.describe("Field type"),
 							description: z.string().optional().describe("Field description"),
 							required: z.boolean().optional().describe("Whether the field is required"),
+							default_value: z.unknown().optional().describe("Default value"),
 						}),
 					)
 					.describe(
@@ -1676,12 +1677,12 @@ Recommended workflow:
 		{
 			description: "Get entity schema details by name (FREE).",
 			inputSchema: {
-				name: z.string().describe("Schema name (e.g., 'job_posting')"),
+				schema_name: z.string().describe("Schema name (e.g., 'job_posting')"),
 			},
 		},
-		async ({ name }) => {
+		async ({ schema_name }) => {
 			try {
-				const result = await getEntitySchema(name);
+				const result = await getEntitySchema(schema_name);
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
@@ -1697,12 +1698,12 @@ Recommended workflow:
 			description:
 				"Delete an entity schema and all associated entities (FREE). WARNING: This permanently deletes all entities in this schema.",
 			inputSchema: {
-				name: z.string().describe("Schema name to delete"),
+				schema_name: z.string().describe("Schema name to delete"),
 			},
 		},
-		async ({ name }) => {
+		async ({ schema_name }) => {
 			try {
-				const result = await deleteEntitySchema(name);
+				const result = await deleteEntitySchema(schema_name);
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
@@ -1771,22 +1772,21 @@ Recommended workflow:
 					.record(z.unknown())
 					.optional()
 					.describe("Field filters as JSON object"),
-				aggregation_type: z
-					.enum(["count", "count_by", "timeline"])
+				aggregations: z
+					.array(
+						z.object({
+							type: z.enum(["count", "count_by", "timeline"]).describe("Aggregation type"),
+							field: z.string().optional().describe("For count_by: field to group by"),
+							interval: z.enum(["day", "week", "month"]).optional().describe("For timeline: time interval"),
+							date_field: z
+								.enum(["created_at", "first_seen_at", "last_seen_at"])
+								.optional()
+								.describe("For timeline: date field"),
+							days_back: z.number().optional().describe("For timeline: days to look back (default: 30)"),
+						}),
+					)
 					.optional()
-					.describe("Type of aggregation to perform"),
-				aggregation_field: z
-					.string()
-					.optional()
-					.describe("Field to group by (for count_by aggregation)"),
-				timeline_interval: z
-					.enum(["day", "week", "month"])
-					.optional()
-					.describe("Interval for timeline aggregation"),
-				days_back: z
-					.number()
-					.optional()
-					.describe("Days to look back for timeline (default: 30, max: 365)"),
+					.describe("Array of aggregation requests"),
 				limit: z.number().optional().describe("Number of results (default: 20)"),
 				offset: z.number().optional().describe("Pagination offset"),
 			},
@@ -1794,25 +1794,11 @@ Recommended workflow:
 		async ({
 			schema_name,
 			filter,
-			aggregation_type,
-			aggregation_field,
-			timeline_interval,
-			days_back,
+			aggregations,
 			limit,
 			offset,
 		}) => {
 			try {
-				const aggregations = aggregation_type
-					? [
-							{
-								type: aggregation_type,
-								field: aggregation_field,
-								interval: timeline_interval,
-								days_back,
-							},
-					  ]
-					: undefined;
-
 				const result = await queryEntities(schema_name, {
 					filter,
 					aggregations,
@@ -1987,21 +1973,18 @@ Recommended workflow:
 					.number()
 					.optional()
 					.describe("Threshold for population_change/threshold conditions"),
-				action_type: z
-					.enum(["email", "webhook", "slack", "log"])
-					.describe("Type of action to perform when triggered"),
-				action_recipients: z
-					.array(z.string())
-					.optional()
-					.describe("Email recipients (for email action)"),
-				action_webhook_url: z
+				condition_natural_language: z
 					.string()
 					.optional()
-					.describe("Webhook URL (for webhook action)"),
-				action_slack_channel: z
-					.string()
-					.optional()
-					.describe("Slack channel (for slack action)"),
+					.describe("For custom type: LLM-evaluated condition"),
+				actions: z
+					.array(
+						z.object({
+							type: z.enum(["email", "webhook", "slack", "log"]).describe("Action type"),
+							config: z.record(z.unknown()).describe("Action configuration (recipients, url, channel, etc.)"),
+						}),
+					)
+					.describe("Actions to execute when triggered"),
 			},
 		},
 		async ({
@@ -2013,10 +1996,8 @@ Recommended workflow:
 			condition_operator,
 			condition_value,
 			condition_threshold,
-			action_type,
-			action_recipients,
-			action_webhook_url,
-			action_slack_channel,
+			condition_natural_language,
+			actions,
 		}) => {
 			try {
 				// Build condition config with proper type
@@ -2033,33 +2014,22 @@ Recommended workflow:
 					operator?: "=" | "!=" | ">" | "<" | ">=" | "<=" | "contains" | "matches";
 					value?: unknown;
 					threshold?: number;
+					natural_language?: string;
 				} = { type: condition_type };
 				if (condition_field) condition.field = condition_field;
 				if (condition_operator) condition.operator = condition_operator;
 				if (condition_value !== undefined) condition.value = condition_value;
 				if (condition_threshold !== undefined)
 					condition.threshold = condition_threshold;
-
-				// Build action config
-				const actionConfig: {
-					recipients?: string[];
-					url?: string;
-					method?: "POST" | "PUT";
-					channel?: string;
-				} = {};
-				if (action_recipients) actionConfig.recipients = action_recipients;
-				if (action_webhook_url) {
-					actionConfig.url = action_webhook_url;
-					actionConfig.method = "POST";
-				}
-				if (action_slack_channel) actionConfig.channel = action_slack_channel;
+				if (condition_natural_language)
+					condition.natural_language = condition_natural_language;
 
 				const result = await createEntitySignal({
 					schema_id,
 					name,
 					description,
 					condition_config: condition,
-					actions_config: [{ type: action_type, config: actionConfig }],
+					actions_config: actions,
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

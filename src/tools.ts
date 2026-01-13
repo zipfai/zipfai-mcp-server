@@ -893,12 +893,12 @@ export function registerTools(server: McpServer): void {
 							"Advanced research gathers real web data about entities and resolves URLs/addresses before generating the workflow.",
 					),
 				research_budget: z
-					.union([z.number().positive().max(500), z.null()])
+					.union([z.number().positive(), z.null()])
 					.optional()
 					.describe(
-						"Override the preset's research budget. Set a positive number (max 500) for custom limit, " +
+						"Override the preset's research budget. Set any positive number for custom limit, " +
 							"or null for unlimited research (uses your credit balance). " +
-							"WARNING: Unlimited mode can consume your entire credit balance.",
+							"WARNING: Custom and unlimited modes can consume significant credits.",
 					),
 			},
 		},

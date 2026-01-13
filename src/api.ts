@@ -838,6 +838,7 @@ export async function planWorkflow(params: {
 	max_credits_per_execution?: number;
 	skip_entity_discovery?: boolean;
 	advanced?: boolean | "quick" | "standard" | "thorough" | "comprehensive";
+	research_budget?: number | null;
 }): Promise<PlanWorkflowResponse> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows/plan`, {
 		method: "POST",

@@ -892,6 +892,14 @@ export function registerTools(server: McpServer): void {
 							"'quick' (~10 credits), 'standard' (~30 credits), 'thorough' (~50 credits), 'comprehensive' (~100 credits). " +
 							"Advanced research gathers real web data about entities and resolves URLs/addresses before generating the workflow.",
 					),
+				research_budget: z
+					.union([z.number().positive().max(500), z.null()])
+					.optional()
+					.describe(
+						"Override the preset's research budget. Set a positive number (max 500) for custom limit, " +
+							"or null for unlimited research (uses your credit balance). " +
+							"WARNING: Unlimited mode can consume your entire credit balance.",
+					),
 			},
 		},
 		async ({
@@ -900,6 +908,7 @@ export function registerTools(server: McpServer): void {
 			max_credits_per_execution,
 			skip_entity_discovery,
 			advanced,
+			research_budget,
 		}) => {
 			try {
 				const result = await planWorkflow({
@@ -908,6 +917,9 @@ export function registerTools(server: McpServer): void {
 					max_credits_per_execution: max_credits_per_execution ?? undefined,
 					skip_entity_discovery: skip_entity_discovery ?? undefined,
 					advanced: advanced ?? undefined,
+					research_budget: research_budget ?? undefined,
+					// Note: user_id is not available in MCP context, so unlimited mode will fail
+					// Users should use the REST API directly for unlimited mode
 				});
 
 				return {

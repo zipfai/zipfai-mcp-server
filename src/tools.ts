@@ -21,6 +21,7 @@ import {
 	getStatus,
 	getWorkflowDetails,
 	getWorkflowDiff,
+	getWorkflowSlackStatus,
 	getWorkflowTimeline,
 	getWorkflowUpdatesDigest,
 	listEntities,
@@ -34,6 +35,7 @@ import {
 	sessionCrawl,
 	sessionSearch,
 	suggestSchema,
+	testWorkflowSlack,
 	updateEntity,
 	updateEntitySignal,
 	updateWorkflow,
@@ -1560,6 +1562,56 @@ Recommended workflow:
 		async ({ workflow_id }) => {
 			try {
 				const result = await deleteWorkflow(workflow_id);
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow - Get Slack configuration status
+	// =========================================================================
+	server.registerTool(
+		"zipfai_get_workflow_slack_status",
+		{
+			description:
+				"Get Slack configuration status for a workflow (FREE). Shows whether Slack is configured, enabled, and ready for test notifications.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+			},
+		},
+		async ({ workflow_id }) => {
+			try {
+				const result = await getWorkflowSlackStatus(workflow_id);
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow - Test Slack notification
+	// =========================================================================
+	server.registerTool(
+		"zipfai_test_workflow_slack",
+		{
+			description:
+				"Send a test Slack notification for a workflow (FREE). Verifies that the Slack webhook is configured correctly and can receive messages.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+			},
+		},
+		async ({ workflow_id }) => {
+			try {
+				const result = await testWorkflowSlack(workflow_id);
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

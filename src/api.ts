@@ -1775,6 +1775,50 @@ export async function deleteEntitySignal(signalId: string): Promise<{ message: s
 }
 
 // =========================================================================
+// Workflow Slack Test
+// =========================================================================
+
+export async function getWorkflowSlackStatus(workflowId: string): Promise<{
+	endpoint: string;
+	method: string;
+	description: string;
+	credits_cost: number;
+	workflow_id: string;
+	workflow_name: string;
+	slack_status: {
+		configured: boolean;
+		enabled: boolean;
+		webhook_configured: boolean;
+		per_execution: boolean;
+		digest: string;
+		event_types: string[];
+	};
+	validation_error: string | null;
+	ready_to_test: boolean;
+}> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}/test-slack`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse(response);
+}
+
+export async function testWorkflowSlack(workflowId: string): Promise<{
+	success: boolean;
+	message: string;
+	workflow_id: string;
+	workflow_name: string;
+	channel: string;
+	timestamp: string;
+}> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}/test-slack`, {
+		method: "POST",
+		headers: getHeaders(),
+	});
+	return handleResponse(response);
+}
+
+// =========================================================================
 // Status API - Health check and account info
 // =========================================================================
 

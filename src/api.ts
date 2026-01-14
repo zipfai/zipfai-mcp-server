@@ -838,6 +838,7 @@ export async function planWorkflow(params: {
 	max_credits_per_execution?: number;
 	skip_entity_discovery?: boolean;
 	advanced?: boolean | "quick" | "standard" | "thorough" | "comprehensive";
+	research_budget?: number | null;
 }): Promise<PlanWorkflowResponse> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows/plan`, {
 		method: "POST",
@@ -1771,6 +1772,50 @@ export async function deleteEntitySignal(signalId: string): Promise<{ message: s
 		headers: getHeaders(),
 	});
 	return handleResponse<{ message: string }>(response);
+}
+
+// =========================================================================
+// Workflow Slack Test
+// =========================================================================
+
+export async function getWorkflowSlackStatus(workflowId: string): Promise<{
+	endpoint: string;
+	method: string;
+	description: string;
+	credits_cost: number;
+	workflow_id: string;
+	workflow_name: string;
+	slack_status: {
+		configured: boolean;
+		enabled: boolean;
+		webhook_configured: boolean;
+		per_execution: boolean;
+		digest: string;
+		event_types: string[];
+	};
+	validation_error: string | null;
+	ready_to_test: boolean;
+}> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}/test-slack`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse(response);
+}
+
+export async function testWorkflowSlack(workflowId: string): Promise<{
+	success: boolean;
+	message: string;
+	workflow_id: string;
+	workflow_name: string;
+	channel: string;
+	timestamp: string;
+}> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}/test-slack`, {
+		method: "POST",
+		headers: getHeaders(),
+	});
+	return handleResponse(response);
 }
 
 // =========================================================================

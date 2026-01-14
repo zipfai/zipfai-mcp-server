@@ -21,6 +21,7 @@ import {
 	getStatus,
 	getWorkflowDetails,
 	getWorkflowDiff,
+	getWorkflowSlackStatus,
 	getWorkflowTimeline,
 	getWorkflowUpdatesDigest,
 	listEntities,
@@ -34,6 +35,7 @@ import {
 	sessionCrawl,
 	sessionSearch,
 	suggestSchema,
+	testWorkflowSlack,
 	updateEntity,
 	updateEntitySignal,
 	updateWorkflow,
@@ -892,6 +894,14 @@ export function registerTools(server: McpServer): void {
 							"'quick' (~10 credits), 'standard' (~30 credits), 'thorough' (~50 credits), 'comprehensive' (~100 credits). " +
 							"Advanced research gathers real web data about entities and resolves URLs/addresses before generating the workflow.",
 					),
+				research_budget: z
+					.union([z.number().positive(), z.null()])
+					.optional()
+					.describe(
+						"Override the preset's research budget. Set any positive number for custom limit, " +
+							"or null for unlimited research (uses your credit balance). " +
+							"WARNING: Custom and unlimited modes can consume significant credits.",
+					),
 			},
 		},
 		async ({
@@ -900,6 +910,7 @@ export function registerTools(server: McpServer): void {
 			max_credits_per_execution,
 			skip_entity_discovery,
 			advanced,
+			research_budget,
 		}) => {
 			try {
 				const result = await planWorkflow({
@@ -908,6 +919,9 @@ export function registerTools(server: McpServer): void {
 					max_credits_per_execution: max_credits_per_execution ?? undefined,
 					skip_entity_discovery: skip_entity_discovery ?? undefined,
 					advanced: advanced ?? undefined,
+					research_budget: research_budget ?? undefined,
+					// Note: user_id is not available in MCP context, so unlimited mode will fail
+					// Users should use the REST API directly for unlimited mode
 				});
 
 				return {
@@ -1548,6 +1562,56 @@ Recommended workflow:
 		async ({ workflow_id }) => {
 			try {
 				const result = await deleteWorkflow(workflow_id);
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow - Get Slack configuration status
+	// =========================================================================
+	server.registerTool(
+		"zipfai_get_workflow_slack_status",
+		{
+			description:
+				"Get Slack configuration status for a workflow (FREE). Shows whether Slack is configured, enabled, and ready for test notifications.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+			},
+		},
+		async ({ workflow_id }) => {
+			try {
+				const result = await getWorkflowSlackStatus(workflow_id);
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow - Test Slack notification
+	// =========================================================================
+	server.registerTool(
+		"zipfai_test_workflow_slack",
+		{
+			description:
+				"Send a test Slack notification for a workflow (FREE). Verifies that the Slack webhook is configured correctly and can receive messages.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+			},
+		},
+		async ({ workflow_id }) => {
+			try {
+				const result = await testWorkflowSlack(workflow_id);
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

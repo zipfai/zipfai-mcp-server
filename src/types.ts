@@ -287,7 +287,7 @@ export interface WorkflowStopCondition {
 export interface WorkflowStep {
 	step_id: string;
 	step_name: string;
-	step_type: "search" | "crawl" | "fan_out" | "aggregate" | "filter" | "transform";
+	step_type: "search" | "crawl" | "aggregate";
 	config: Record<string, unknown>;
 	depends_on?: string[];
 	output_key?: string;

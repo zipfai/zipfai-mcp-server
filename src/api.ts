@@ -683,6 +683,14 @@ export async function createWorkflow(params: {
 	session_id?: string;
 	// Email notification settings
 	email_config?: EmailConfig;
+	// Slack notification settings
+	slack_config?: {
+		enabled: boolean;
+		webhook_url: string;
+		per_execution?: boolean;
+		include_diff?: boolean;
+		include_summary?: boolean;
+	};
 	// Dry run mode - preview cost without creating
 	dry_run?: boolean;
 }): Promise<CreateWorkflowResponse> {
@@ -753,6 +761,14 @@ export async function updateWorkflow(
 		session_id?: string | null;
 		// Email notification settings (null to disable)
 		email_config?: EmailConfig | null;
+		// Slack notification settings (null to disable)
+		slack_config?: {
+			enabled: boolean;
+			webhook_url: string;
+			per_execution?: boolean;
+			include_diff?: boolean;
+			include_summary?: boolean;
+		} | null;
 	},
 ): Promise<{ workflow: Workflow }> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}`, {

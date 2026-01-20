@@ -29,6 +29,7 @@ import type {
 	SessionTimelineResponse,
 	SignalAction,
 	SignalCondition,
+	SlackConfig,
 	StatusResponse,
 	SuggestSchemaResponse,
 	Workflow,
@@ -603,6 +604,7 @@ export async function sessionCrawl(
 		extraction_schema?: Record<string, string>;
 		classify_documents?: boolean;
 		generate_summary?: boolean;
+		expansion?: "internal" | "external" | "both" | "none";
 	},
 ): Promise<CrawlResponse> {
 	const response = await fetch(`${ZIPF_API_BASE}/sessions/${sessionId}/crawl`, {
@@ -615,6 +617,7 @@ export async function sessionCrawl(
 			extraction_schema: params.extraction_schema,
 			classify_documents: params.classify_documents ?? true,
 			generate_summary: params.generate_summary ?? false,
+			expansion: params.expansion,
 			processing_mode: "sync",
 		}),
 	});
@@ -683,6 +686,8 @@ export async function createWorkflow(params: {
 	session_id?: string;
 	// Email notification settings
 	email_config?: EmailConfig;
+	// Slack notification settings
+	slack_config?: SlackConfig;
 	// Dry run mode - preview cost without creating
 	dry_run?: boolean;
 }): Promise<CreateWorkflowResponse> {
@@ -753,6 +758,8 @@ export async function updateWorkflow(
 		session_id?: string | null;
 		// Email notification settings (null to disable)
 		email_config?: EmailConfig | null;
+		// Slack notification settings (null to disable)
+		slack_config?: SlackConfig | null;
 	},
 ): Promise<{ workflow: Workflow }> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}`, {

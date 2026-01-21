@@ -1443,7 +1443,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_workflow_diff",
 		{
 			description:
-				"Get what changed between workflow executions (FREE). Returns diffs instead of raw data.",
+				"Get what changed between consecutive workflow executions (FREE). Returns diffs instead of raw data. Changes are calculated by comparing each execution to its immediately previous execution (not to a global baseline). When `previous_execution_id` is null in a diff entry, it indicates the first execution.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				limit: z

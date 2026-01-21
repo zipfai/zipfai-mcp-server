@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
 	ApiError,
+	applyWorkflowRecovery,
 	ask,
 	completeSession,
 	crawlWithPolling,
@@ -21,9 +22,11 @@ import {
 	getStatus,
 	getWorkflowDetails,
 	getWorkflowDiff,
+	getWorkflowRecoverySuggestions,
 	getWorkflowSlackStatus,
 	getWorkflowTimeline,
 	getWorkflowUpdatesDigest,
+	getWorkflowValidationStatus,
 	listEntities,
 	listEntitySchemas,
 	listEntitySignals,
@@ -39,6 +42,7 @@ import {
 	updateEntity,
 	updateEntitySignal,
 	updateWorkflow,
+	validateWorkflow,
 } from "./api.js";
 
 // Helper to format errors for MCP response
@@ -1786,6 +1790,156 @@ Recommended workflow:
 		async ({ workflow_id }) => {
 			try {
 				const result = await testWorkflowSlack(workflow_id);
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow Validation - Get validation status
+	// =========================================================================
+	server.registerTool(
+		"zipfai_get_workflow_validation_status",
+		{
+			description:
+				"Get validation status and configuration for a workflow (FREE). Shows last validation time, status, and whether validation is available.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+			},
+		},
+		async ({ workflow_id }) => {
+			try {
+				const result = await getWorkflowValidationStatus(workflow_id);
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow Validation - Run validation
+	// =========================================================================
+	server.registerTool(
+		"zipfai_validate_workflow",
+		{
+			description:
+				"Run URL validation on a workflow (FREE). Checks URL reachability, detects redirects, suggests corrections for typos (www1→www, .cpm→.com). Returns failed URLs, redirect chains, and correction suggestions.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+				url_health_check: z
+					.boolean()
+					.optional()
+					.describe("Check URL reachability via HEAD requests (default: true)"),
+				full_validation: z
+					.boolean()
+					.optional()
+					.describe(
+						"Validate step references like depends_on, urls_from_step (default: true)",
+					),
+				force: z
+					.boolean()
+					.optional()
+					.describe("Re-validate even if recently validated (default: false)"),
+			},
+		},
+		async ({ workflow_id, url_health_check, full_validation, force }) => {
+			try {
+				const result = await validateWorkflow(workflow_id, {
+					url_health_check,
+					full_validation,
+					force,
+				});
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow Recovery - Get suggestions
+	// =========================================================================
+	server.registerTool(
+		"zipfai_get_workflow_recovery_suggestions",
+		{
+			description:
+				"Get pending recovery suggestions for a workflow (FREE). Shows URL corrections discovered after 404 failures, including replacement URLs found via search.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+			},
+		},
+		async ({ workflow_id }) => {
+			try {
+				const result = await getWorkflowRecoverySuggestions(workflow_id);
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow Recovery - Apply suggestions
+	// =========================================================================
+	server.registerTool(
+		"zipfai_apply_workflow_recovery",
+		{
+			description:
+				"Apply or reject recovery suggestions for a workflow (FREE). Updates workflow URLs with corrections and optionally triggers step retry.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+				suggestion_ids: z
+					.array(z.string())
+					.optional()
+					.describe("Specific suggestion IDs to apply"),
+				apply_all: z
+					.boolean()
+					.optional()
+					.describe("Apply all pending suggestions (default: false)"),
+				reject_all: z
+					.boolean()
+					.optional()
+					.describe("Reject all pending suggestions (default: false)"),
+				reject_reason: z.string().optional().describe("Reason for rejection"),
+				retry_steps: z
+					.boolean()
+					.optional()
+					.describe(
+						"Mark affected steps for retry after applying (default: true)",
+					),
+			},
+		},
+		async ({
+			workflow_id,
+			suggestion_ids,
+			apply_all,
+			reject_all,
+			reject_reason,
+			retry_steps,
+		}) => {
+			try {
+				const result = await applyWorkflowRecovery(workflow_id, {
+					suggestion_ids,
+					apply_all,
+					reject_all,
+					reject_reason,
+					retry_steps,
+				});
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

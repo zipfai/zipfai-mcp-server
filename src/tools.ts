@@ -639,7 +639,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_session_crawl",
 		{
 			description:
-				"Crawl URLs within a session context (1-2 credits/page). Automatically skips URLs already crawled in the session. Use session_id from zipfai_create_session.",
+				"Crawl URLs within a session context (1-2 credits/page). Automatically skips URLs already crawled in the session. When expansion is enabled, Smart Crawl finds high-value pages first, saving 50-75% of crawl budget. Use session_id from zipfai_create_session.",
 			inputSchema: {
 				session_id: z
 					.string()
@@ -665,6 +665,12 @@ export function registerTools(server: McpServer): void {
 					.boolean()
 					.optional()
 					.describe("Generate AI summary (FREE)"),
+				expansion: z
+					.enum(["internal", "external", "both", "none"])
+					.optional()
+					.describe(
+						"Link following with Smart Crawl: internal (same domain), external (other domains), both, or none. Smart Crawl automatically prioritizes high-value pages.",
+					),
 			},
 		},
 		async ({
@@ -675,6 +681,7 @@ export function registerTools(server: McpServer): void {
 			extraction_schema,
 			classify_documents,
 			generate_summary,
+			expansion,
 		}) => {
 			try {
 				const result = await sessionCrawl(session_id, {
@@ -684,6 +691,7 @@ export function registerTools(server: McpServer): void {
 					extraction_schema: extraction_schema ?? undefined,
 					classify_documents: classify_documents ?? true,
 					generate_summary: generate_summary ?? false,
+					expansion: expansion ?? undefined,
 				});
 
 				return {
@@ -940,7 +948,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_create_workflow",
 		{
 			description:
-				"Create a workflow for scheduled recurring monitoring (1-2 credits per execution). Supports search, crawl, or AI-planned multi-step workflows. Email notifications are enabled by default (per-execution). Configure with email_notifications, email_per_execution, email_digest, and email_recipients parameters.",
+				"Create a workflow for scheduled recurring monitoring (1-2 credits per execution). Supports search, crawl, or AI-planned multi-step workflows. For multi_step mode, provide steps array with fan_out for parallel execution. Email notifications enabled by default. Slack notifications available via slack_webhook_url.",
 			inputSchema: {
 				name: z.string().describe("Workflow name"),
 				mode: z
@@ -956,6 +964,45 @@ export function registerTools(server: McpServer): void {
 					.optional()
 					.describe(
 						"For simple mode: {query, max_results} or {urls, max_pages}",
+					),
+				steps: z
+					.array(
+						z.object({
+							step_id: z.string().describe("Unique step identifier"),
+							step_name: z.string().describe("Human-readable step name"),
+							step_type: z
+								.enum(["search", "crawl", "aggregate", "fan_out", "filter", "transform"])
+								.describe("Step type"),
+							config: z.record(z.unknown()).describe("Step-specific configuration"),
+							depends_on: z
+								.array(z.string())
+								.optional()
+								.describe("Step IDs this step depends on"),
+							output_key: z
+								.string()
+								.optional()
+								.describe("Key to store step output for downstream steps"),
+							cascade_condition: z
+								.object({
+									type: z
+										.string()
+										.describe(
+											"Condition type: always, has_results, result_count, field_match, llm_evaluate",
+										),
+									from_step: z
+										.string()
+										.optional()
+										.describe("Step ID to evaluate condition against"),
+									operator: z.string().optional().describe("Comparison operator"),
+									value: z.unknown().optional().describe("Value to compare against"),
+								})
+								.optional()
+								.describe("Condition for step execution based on previous step results"),
+						}),
+					)
+					.optional()
+					.describe(
+						"For multi_step mode: array of workflow steps with dependencies and cascade conditions. Enables fan-out parallel execution.",
 					),
 				intent: z
 					.string()
@@ -1049,6 +1096,26 @@ export function registerTools(server: McpServer): void {
 					.describe(
 						"Custom email recipients (array of email addresses). If not provided, uses account email.",
 					),
+				slack_webhook_url: z
+					.string()
+					.optional()
+					.describe(
+						"Slack Incoming Webhook URL (https://hooks.slack.com/services/..., /workflows/..., or /triggers/...)",
+					),
+				slack_per_execution: z
+					.boolean()
+					.optional()
+					.describe(
+						"Send Slack notification after each execution (default: true when webhook provided)",
+					),
+				slack_include_diff: z
+					.boolean()
+					.optional()
+					.describe("Include change diff in Slack notifications (default: true)"),
+				slack_include_summary: z
+					.boolean()
+					.optional()
+					.describe("Include AI summary in Slack notifications (default: true)"),
 				dry_run: z
 					.boolean()
 					.optional()
@@ -1062,6 +1129,7 @@ export function registerTools(server: McpServer): void {
 			mode,
 			workflow_type,
 			operation_config,
+			steps,
 			intent,
 			stop_condition_type,
 			stop_condition_value,
@@ -1078,6 +1146,10 @@ export function registerTools(server: McpServer): void {
 			email_per_execution,
 			email_digest,
 			email_recipients,
+			slack_webhook_url,
+			slack_per_execution,
+			slack_include_diff,
+			slack_include_summary,
 			dry_run,
 		}) => {
 			try {
@@ -1124,11 +1196,50 @@ export function registerTools(server: McpServer): void {
 					};
 				}
 
+				// Build slack config from parameters if any slack settings provided
+				let slackConfig:
+					| {
+							enabled: boolean;
+							webhook_url?: string;
+							per_execution?: boolean;
+							include_diff?: boolean;
+							include_summary?: boolean;
+					  }
+					| undefined;
+				if (
+					slack_webhook_url !== undefined ||
+					slack_per_execution !== undefined ||
+					slack_include_diff !== undefined ||
+					slack_include_summary !== undefined
+				) {
+					slackConfig = {
+						enabled: true,
+						webhook_url: slack_webhook_url ?? undefined,
+						per_execution: slack_per_execution ?? true,
+						include_diff: slack_include_diff ?? true,
+						include_summary: slack_include_summary ?? true,
+					};
+				}
+
 				const result = await createWorkflow({
 					name,
 					mode: mode ?? "simple",
 					workflow_type: workflow_type ?? undefined,
 					operation_config: operation_config ?? undefined,
+					steps: steps as Array<{
+						step_id: string;
+						step_name: string;
+						step_type: "search" | "crawl" | "aggregate";
+						config: Record<string, unknown>;
+						depends_on?: string[];
+						output_key?: string;
+						cascade_condition?: {
+							type: string;
+							from_step?: string;
+							operator?: string;
+							value?: unknown;
+						};
+					}> ?? undefined,
 					intent: intent ?? undefined,
 					stop_condition: stopCondition as {
 						type:
@@ -1147,6 +1258,7 @@ export function registerTools(server: McpServer): void {
 					timezone: timezone ?? undefined,
 					max_executions: max_executions ?? undefined,
 					email_config: emailConfig,
+					slack_config: slackConfig,
 					dry_run: dry_run ?? undefined,
 				});
 
@@ -1230,7 +1342,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_update_workflow",
 		{
 			description:
-				"Update workflow parameters - name, query, interval, stop condition, status, or email notifications (FREE). Use email_notifications, email_per_execution, email_digest, email_recipients to configure notifications, or disable_emails=true to turn off all notifications.",
+				"Update workflow parameters - name, query, schedule, stop condition, status, email, or Slack notifications (FREE). Use disable_emails/disable_slack to turn off notifications.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				name: z.string().optional().describe("New workflow name"),
@@ -1303,6 +1415,32 @@ export function registerTools(server: McpServer): void {
 					.describe(
 						"Set to true to completely disable email notifications (sets email_config to null).",
 					),
+				slack_webhook_url: z
+					.string()
+					.optional()
+					.describe(
+						"Slack Incoming Webhook URL (https://hooks.slack.com/services/..., /workflows/..., or /triggers/...)",
+					),
+				slack_per_execution: z
+					.boolean()
+					.optional()
+					.describe(
+						"Send Slack notification after each execution (default: true when webhook provided)",
+					),
+				slack_include_diff: z
+					.boolean()
+					.optional()
+					.describe("Include change diff in Slack notifications (default: true)"),
+				slack_include_summary: z
+					.boolean()
+					.optional()
+					.describe("Include AI summary in Slack notifications (default: true)"),
+				disable_slack: z
+					.boolean()
+					.optional()
+					.describe(
+						"Set to true to completely disable Slack notifications (sets slack_config to null).",
+					),
 			},
 		},
 		async ({
@@ -1322,6 +1460,11 @@ export function registerTools(server: McpServer): void {
 			email_digest,
 			email_recipients,
 			disable_emails,
+			slack_webhook_url,
+			slack_per_execution,
+			slack_include_diff,
+			slack_include_summary,
+			disable_slack,
 		}) => {
 			try {
 				// Build email config if any email settings provided
@@ -1355,6 +1498,36 @@ export function registerTools(server: McpServer): void {
 					};
 				}
 
+				// Build slack config if any slack settings provided
+				let slackConfig:
+					| {
+							enabled: boolean;
+							webhook_url?: string;
+							per_execution?: boolean;
+							include_diff?: boolean;
+							include_summary?: boolean;
+					  }
+					| null
+					| undefined;
+
+				if (disable_slack === true) {
+					// Explicitly disable all slack notifications
+					slackConfig = null;
+				} else if (
+					slack_webhook_url !== undefined ||
+					slack_per_execution !== undefined ||
+					slack_include_diff !== undefined ||
+					slack_include_summary !== undefined
+				) {
+					slackConfig = {
+						enabled: true,
+						webhook_url: slack_webhook_url,
+						per_execution: slack_per_execution ?? true,
+						include_diff: slack_include_diff ?? true,
+						include_summary: slack_include_summary ?? true,
+					};
+				}
+
 				const result = await updateWorkflow(workflow_id, {
 					name: name ?? undefined,
 					operation_config: operation_config ?? undefined,
@@ -1367,6 +1540,7 @@ export function registerTools(server: McpServer): void {
 					max_executions: max_executions ?? undefined,
 					status: status ?? undefined,
 					email_config: emailConfig,
+					slack_config: slackConfig,
 				});
 
 				return {

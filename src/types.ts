@@ -268,6 +268,15 @@ export interface EmailConfig {
 	recipients?: string[] | null; // Custom recipients (null = use account email)
 }
 
+// Slack configuration for workflow notifications
+export interface SlackConfig {
+	enabled: boolean;
+	webhook_url?: string; // Slack Incoming Webhook URL
+	per_execution?: boolean; // Send notification after each execution
+	include_diff?: boolean; // Include change diff in notifications
+	include_summary?: boolean; // Include AI summary in notifications
+}
+
 export interface WorkflowStopCondition {
 	type:
 		| "result_count"
@@ -317,6 +326,7 @@ export interface Workflow {
 	last_execution_at?: string;
 	session_id?: string;
 	email_config?: EmailConfig;
+	slack_config?: SlackConfig;
 	created_at?: string;
 	updated_at?: string;
 }

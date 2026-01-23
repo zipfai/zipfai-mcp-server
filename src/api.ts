@@ -1826,6 +1826,104 @@ export async function testWorkflowSlack(workflowId: string): Promise<{
 }
 
 // =========================================================================
+// Workflow Validation & Recovery
+// =========================================================================
+
+export async function getWorkflowValidationStatus(workflowId: string): Promise<{
+	endpoint: string;
+	method: string;
+	description: string;
+	workflow_id: string;
+	validation_status?: {
+		last_validated_at?: string;
+		validation_available: boolean;
+		issues_found?: number;
+	};
+}> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}/validate`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse(response);
+}
+
+export async function validateWorkflow(
+	workflowId: string,
+	params?: {
+		url_health_check?: boolean;
+		full_validation?: boolean;
+		force?: boolean;
+	}
+): Promise<{
+	workflow_id: string;
+	validation_results: {
+		valid: boolean;
+		errors?: Array<{ type: string; message: string; step_id?: string }>;
+		warnings?: Array<{ type: string; message: string; step_id?: string }>;
+		url_health?: Array<{
+			url: string;
+			status: "ok" | "failed" | "redirect";
+			status_code?: number;
+			redirect_url?: string;
+			correction_suggestion?: string;
+		}>;
+	};
+	validated_at: string;
+}> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}/validate`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify(params || {}),
+	});
+	return handleResponse(response);
+}
+
+export async function getWorkflowRecoverySuggestions(workflowId: string): Promise<{
+	workflow_id: string;
+	suggestions: Array<{
+		id: string;
+		type: "url_correction" | "url_replacement";
+		original_url: string;
+		suggested_url: string;
+		reason: string;
+		confidence: number;
+		step_id?: string;
+		status: "pending" | "applied" | "rejected";
+	}>;
+	total_pending: number;
+}> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}/recovery`, {
+		method: "GET",
+		headers: getHeaders(),
+	});
+	return handleResponse(response);
+}
+
+export async function applyWorkflowRecovery(
+	workflowId: string,
+	params: {
+		suggestion_ids?: string[];
+		apply_all?: boolean;
+		reject_all?: boolean;
+		reject_reason?: string;
+		retry_steps?: boolean;
+	}
+): Promise<{
+	workflow_id: string;
+	applied: number;
+	rejected: number;
+	steps_marked_for_retry?: string[];
+	message: string;
+}> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}/recovery`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse(response);
+}
+
+// =========================================================================
 // Status API - Health check and account info
 // =========================================================================
 

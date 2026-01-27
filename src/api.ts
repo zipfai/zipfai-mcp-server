@@ -690,6 +690,8 @@ export async function createWorkflow(params: {
 	slack_config?: SlackConfig;
 	// Dry run mode - preview cost without creating
 	dry_run?: boolean;
+	// Content recency filter confidence threshold (0-1, default 0.50)
+	recency_confidence_threshold?: number;
 }): Promise<CreateWorkflowResponse> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows`, {
 		method: "POST",
@@ -760,6 +762,8 @@ export async function updateWorkflow(
 		email_config?: EmailConfig | null;
 		// Slack notification settings (null to disable)
 		slack_config?: SlackConfig | null;
+		// Content recency filter confidence threshold (0-1, default 0.50)
+		recency_confidence_threshold?: number;
 	},
 ): Promise<{ workflow: Workflow }> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}`, {

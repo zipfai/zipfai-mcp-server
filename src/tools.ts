@@ -1126,6 +1126,14 @@ export function registerTools(server: McpServer): void {
 					.describe(
 						"Preview cost estimate without creating workflow. Returns estimated credits per execution and balance check. For ai_planned mode, use zipfai_plan_workflow instead.",
 					),
+				recency_confidence_threshold: z
+					.number()
+					.optional()
+					.describe(
+						"Content recency filter confidence threshold (0-1). Lower values filter more aggressively. " +
+						"Higher values only filter when dates are explicitly detected. Default: 0.50. " +
+						"Set to 1.0 to disable filtering entirely.",
+					),
 			},
 		},
 		async ({
@@ -1155,6 +1163,7 @@ export function registerTools(server: McpServer): void {
 			slack_include_diff,
 			slack_include_summary,
 			dry_run,
+			recency_confidence_threshold,
 		}) => {
 			try {
 				// Build stop condition from parameters
@@ -1264,6 +1273,7 @@ export function registerTools(server: McpServer): void {
 					email_config: emailConfig,
 					slack_config: slackConfig,
 					dry_run: dry_run ?? undefined,
+					recency_confidence_threshold: recency_confidence_threshold ?? undefined,
 				});
 
 				return {
@@ -1445,6 +1455,14 @@ export function registerTools(server: McpServer): void {
 					.describe(
 						"Set to true to completely disable Slack notifications (sets slack_config to null).",
 					),
+				recency_confidence_threshold: z
+					.number()
+					.optional()
+					.describe(
+						"Content recency filter confidence threshold (0-1). Lower values filter more aggressively. " +
+						"Higher values only filter when dates are explicitly detected. Default: 0.50. " +
+						"Set to 1.0 to disable filtering entirely.",
+					),
 			},
 		},
 		async ({
@@ -1469,6 +1487,7 @@ export function registerTools(server: McpServer): void {
 			slack_include_diff,
 			slack_include_summary,
 			disable_slack,
+			recency_confidence_threshold,
 		}) => {
 			try {
 				// Build email config if any email settings provided
@@ -1545,6 +1564,7 @@ export function registerTools(server: McpServer): void {
 					status: status ?? undefined,
 					email_config: emailConfig,
 					slack_config: slackConfig,
+					recency_confidence_threshold: recency_confidence_threshold ?? undefined,
 				});
 
 				return {

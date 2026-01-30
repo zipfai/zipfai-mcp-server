@@ -1356,7 +1356,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_update_workflow",
 		{
 			description:
-				"Update workflow parameters - name, query, schedule, stop condition, status, email, or Slack notifications (FREE). Use disable_emails/disable_slack to turn off notifications.",
+				"Update workflow parameters - name, query, schedule, stop condition, status, email/Slack notifications, or suppression threshold (FREE). Use disable_emails/disable_slack to turn off notifications. Use suppression_threshold (0-100) to control notification intelligence.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				name: z.string().optional().describe("New workflow name"),
@@ -1463,6 +1463,13 @@ export function registerTools(server: McpServer): void {
 						"Higher values only filter when dates are explicitly detected. Default: 0.50. " +
 						"Set to 1.0 to disable filtering entirely.",
 					),
+				suppression_threshold: z
+					.number()
+					.optional()
+					.describe(
+						"Minimum information gain score (0-100) to send notification. Higher values = more suppression. " +
+						"Presets: 0 (all), 30 (balanced), 50 (important), 70 (critical). Default: 30.",
+					),
 			},
 		},
 		async ({
@@ -1488,6 +1495,7 @@ export function registerTools(server: McpServer): void {
 			slack_include_summary,
 			disable_slack,
 			recency_confidence_threshold,
+			suppression_threshold,
 		}) => {
 			try {
 				// Build email config if any email settings provided
@@ -1551,6 +1559,12 @@ export function registerTools(server: McpServer): void {
 					};
 				}
 
+				// Build notification settings if suppression_threshold provided
+				const notificationSettings =
+					suppression_threshold !== undefined
+						? { suppression_threshold }
+						: undefined;
+
 				const result = await updateWorkflow(workflow_id, {
 					name: name ?? undefined,
 					operation_config: operation_config ?? undefined,
@@ -1564,6 +1578,7 @@ export function registerTools(server: McpServer): void {
 					status: status ?? undefined,
 					email_config: emailConfig,
 					slack_config: slackConfig,
+					notification_settings: notificationSettings,
 					recency_confidence_threshold: recency_confidence_threshold ?? undefined,
 				});
 

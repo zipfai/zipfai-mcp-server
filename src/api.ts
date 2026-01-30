@@ -764,6 +764,8 @@ export async function updateWorkflow(
 		slack_config?: SlackConfig | null;
 		// Content recency filter confidence threshold (0-1, default 0.50)
 		recency_confidence_threshold?: number;
+		// Notification intelligence settings
+		notification_settings?: { suppression_threshold?: number } | null;
 	},
 ): Promise<{ workflow: Workflow }> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows/${workflowId}`, {

@@ -14,6 +14,13 @@ import type {
 	EntitySchema,
 	EntitySignal,
 	EntityStatus,
+	ExecutionFeedbackBatchResponse,
+	ExecutionFeedbackExecutionKind,
+	ExecutionFeedbackListResponse,
+	ExecutionFeedbackRating,
+	ExecutionFeedbackReasonCategory,
+	ExecutionFeedbackResponse,
+	ExecutionFeedbackStatsResponse,
 	ExecutionDiff,
 	ExportEntitiesResponse,
 	ListEntitiesResponse,
@@ -105,10 +112,11 @@ function getApiKey(): string {
 	);
 }
 
-function getHeaders(): Record<string, string> {
+function getHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
 	return {
 		"Content-Type": "application/json",
 		Authorization: `Bearer ${getApiKey()}`,
+		...(extraHeaders || {}),
 	};
 }
 
@@ -833,6 +841,119 @@ export async function getWorkflowDiff(
 		},
 	);
 	return handleResponse<WorkflowDiffResponse>(response);
+}
+
+function getExecutionFeedbackHeaders(): Record<string, string> {
+	return getHeaders({
+		"X-Zipf-Signal-Source": "mcp",
+	});
+}
+
+export async function rateExecution(
+	workflowId: string,
+	executionId: string,
+	params: {
+		execution_kind?: ExecutionFeedbackExecutionKind;
+		workflow_step_id?: string;
+		rating: ExecutionFeedbackRating;
+		reason_category?: ExecutionFeedbackReasonCategory;
+		comment?: string;
+		result_url?: string;
+		idempotency_key?: string;
+		actor_model?: string;
+	},
+): Promise<ExecutionFeedbackResponse> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/executions/${executionId}/feedback`,
+		{
+			method: "POST",
+			headers: getExecutionFeedbackHeaders(),
+			body: JSON.stringify(params),
+		},
+	);
+	return handleResponse<ExecutionFeedbackResponse>(response);
+}
+
+export async function getExecutionRatings(
+	workflowId: string,
+	params?: {
+		execution_id?: string;
+		workflow_step_id?: string;
+		signal_type?: "positive" | "negative" | "all";
+		actor_type?: "human" | "api" | "mcp" | "all";
+		reason_category?: ExecutionFeedbackReasonCategory | "all";
+		limit?: number;
+		since?: string;
+		until?: string;
+		cursor?: string;
+	},
+): Promise<ExecutionFeedbackListResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.execution_id)
+		searchParams.set("execution_id", params.execution_id);
+	if (params?.workflow_step_id)
+		searchParams.set("workflow_step_id", params.workflow_step_id);
+	if (params?.signal_type === "positive")
+		searchParams.set("signal_type", "result_thumbs_up");
+	if (params?.signal_type === "negative")
+		searchParams.set("signal_type", "result_thumbs_down");
+	if (params?.actor_type && params.actor_type !== "all")
+		searchParams.set("actor_type", params.actor_type);
+	if (params?.reason_category && params.reason_category !== "all")
+		searchParams.set("reason_category", params.reason_category);
+	if (params?.limit) searchParams.set("limit", params.limit.toString());
+	if (params?.since) searchParams.set("since", params.since);
+	if (params?.until) searchParams.set("until", params.until);
+	if (params?.cursor) searchParams.set("cursor", params.cursor);
+
+	const query = searchParams.toString();
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/execution-feedback${query ? `?${query}` : ""}`,
+		{
+			method: "GET",
+			headers: getExecutionFeedbackHeaders(),
+		},
+	);
+	return handleResponse<ExecutionFeedbackListResponse>(response);
+}
+
+export async function getExecutionRatingStats(
+	workflowId: string,
+): Promise<ExecutionFeedbackStatsResponse> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/execution-feedback/stats`,
+		{
+			method: "GET",
+			headers: getExecutionFeedbackHeaders(),
+		},
+	);
+	return handleResponse<ExecutionFeedbackStatsResponse>(response);
+}
+
+export async function batchRateExecutions(
+	workflowId: string,
+	params: {
+		feedback: Array<{
+			execution_id: string;
+			execution_kind?: ExecutionFeedbackExecutionKind;
+			workflow_step_id?: string;
+			rating: ExecutionFeedbackRating;
+			reason_category?: ExecutionFeedbackReasonCategory;
+			comment?: string;
+			result_url?: string;
+			idempotency_key?: string;
+		}>;
+	},
+): Promise<ExecutionFeedbackBatchResponse> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/execution-feedback/batch`,
+		{
+			method: "POST",
+			headers: getExecutionFeedbackHeaders(),
+			body: JSON.stringify(params),
+		},
+	);
+	return handleResponse<ExecutionFeedbackBatchResponse>(response);
 }
 
 export async function deleteWorkflow(

@@ -4,6 +4,7 @@ import {
 	ApiError,
 	applyWorkflowRecovery,
 	ask,
+	batchRateExecutions,
 	completeSession,
 	crawlWithPolling,
 	createEntitySchema,
@@ -18,6 +19,8 @@ import {
 	getEntity,
 	getEntitySchema,
 	getEntitySignal,
+	getExecutionRatingStats,
+	getExecutionRatings,
 	getSessionTimeline,
 	getStatus,
 	getWorkflowDetails,
@@ -33,6 +36,7 @@ import {
 	listWorkflows,
 	planWorkflow,
 	queryEntities,
+	rateExecution,
 	research,
 	searchWithPolling,
 	sessionCrawl,
@@ -1675,6 +1679,262 @@ export function registerTools(server: McpServer): void {
 					limit: limit ?? undefined,
 					since: since ?? undefined,
 				});
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow Execution Feedback - Submit a rating
+	// =========================================================================
+	server.registerTool(
+		"zipfai_rate_execution",
+		{
+			description:
+				"Submit thumbs up/down feedback for a workflow execution (FREE). This improves workflow quality over time.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+				execution_id: z.string().describe("Execution ID from workflow timeline"),
+				execution_kind: z
+					.enum(["workflow_execution", "search_job", "crawl_job", "workflow_step"])
+					.optional()
+					.describe("Execution record type"),
+				workflow_step_id: z
+					.string()
+					.optional()
+					.describe("Optional step ID for step-level feedback"),
+				rating: z
+					.enum(["positive", "negative"])
+					.describe("Was this execution helpful?"),
+				reason_category: z
+					.enum([
+						"relevant_results",
+						"accurate_information",
+						"timely_alert",
+						"good_formatting",
+						"irrelevant_results",
+						"missing_information",
+						"outdated_content",
+						"false_positive",
+						"missed_alert",
+						"too_slow",
+						"other",
+					])
+					.optional()
+					.describe("Reason taxonomy label"),
+				comment: z
+					.string()
+					.max(1000)
+					.optional()
+					.describe("Additional context (max 1000 chars)"),
+				result_url: z.string().optional().describe("Specific result URL being rated"),
+				idempotency_key: z.string().optional().describe("Optional idempotency key"),
+				actor_model: z.string().optional().describe("Model/provider identifier"),
+			},
+		},
+		async ({
+			workflow_id,
+			execution_id,
+			execution_kind,
+			workflow_step_id,
+			rating,
+			reason_category,
+			comment,
+			result_url,
+			idempotency_key,
+			actor_model,
+		}) => {
+			try {
+				const result = await rateExecution(workflow_id, execution_id, {
+					execution_kind: execution_kind ?? undefined,
+					workflow_step_id: workflow_step_id ?? undefined,
+					rating,
+					reason_category: reason_category ?? undefined,
+					comment: comment ?? undefined,
+					result_url: result_url ?? undefined,
+					idempotency_key: idempotency_key ?? undefined,
+					actor_model: actor_model ?? undefined,
+				});
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow Execution Feedback - List ratings
+	// =========================================================================
+	server.registerTool(
+		"zipfai_execution_ratings",
+		{
+			description:
+				"Get execution feedback signals for a workflow (FREE). Useful for identifying what worked and what failed.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+				execution_id: z.string().optional().describe("Filter to specific execution"),
+				workflow_step_id: z
+					.string()
+					.optional()
+					.describe("Filter to specific workflow step"),
+				signal_type: z
+					.enum(["positive", "negative", "all"])
+					.optional()
+					.default("all")
+					.describe("Filter by feedback type"),
+				actor_type: z
+					.enum(["human", "api", "mcp", "all"])
+					.optional()
+					.default("all")
+					.describe("Filter by actor type"),
+				reason_category: z
+					.enum([
+						"relevant_results",
+						"accurate_information",
+						"timely_alert",
+						"good_formatting",
+						"irrelevant_results",
+						"missing_information",
+						"outdated_content",
+						"false_positive",
+						"missed_alert",
+						"too_slow",
+						"other",
+						"all",
+					])
+					.optional()
+					.default("all")
+					.describe("Filter by reason category"),
+				limit: z.number().optional().default(50).describe("Max results (1-100)"),
+				since: z
+					.string()
+					.optional()
+					.describe("ISO timestamp - only feedback after this time"),
+				until: z
+					.string()
+					.optional()
+					.describe("ISO timestamp - only feedback before this time"),
+				cursor: z.string().optional().describe("Opaque pagination cursor"),
+			},
+		},
+		async ({
+			workflow_id,
+			execution_id,
+			workflow_step_id,
+			signal_type,
+			actor_type,
+			reason_category,
+			limit,
+			since,
+			until,
+			cursor,
+		}) => {
+			try {
+				const result = await getExecutionRatings(workflow_id, {
+					execution_id: execution_id ?? undefined,
+					workflow_step_id: workflow_step_id ?? undefined,
+					signal_type: signal_type ?? "all",
+					actor_type: actor_type ?? "all",
+					reason_category: reason_category ?? "all",
+					limit: limit ?? 50,
+					since: since ?? undefined,
+					until: until ?? undefined,
+					cursor: cursor ?? undefined,
+				});
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow Execution Feedback - Stats
+	// =========================================================================
+	server.registerTool(
+		"zipfai_execution_rating_stats",
+		{
+			description:
+				"Get aggregated execution feedback stats for a workflow (FREE). Includes positive rate, top issues, and reward totals.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+			},
+		},
+		async ({ workflow_id }) => {
+			try {
+				const result = await getExecutionRatingStats(workflow_id);
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Workflow Execution Feedback - Batch ratings
+	// =========================================================================
+	server.registerTool(
+		"zipfai_batch_rate_executions",
+		{
+			description:
+				"Submit ratings for multiple executions in one request (FREE). Up to 20 items.",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+				feedback: z
+					.array(
+						z.object({
+							execution_id: z.string(),
+							execution_kind: z
+								.enum([
+									"workflow_execution",
+									"search_job",
+									"crawl_job",
+									"workflow_step",
+								])
+								.optional(),
+							workflow_step_id: z.string().optional(),
+							rating: z.enum(["positive", "negative"]),
+							reason_category: z
+								.enum([
+									"relevant_results",
+									"accurate_information",
+									"timely_alert",
+									"good_formatting",
+									"irrelevant_results",
+									"missing_information",
+									"outdated_content",
+									"false_positive",
+									"missed_alert",
+									"too_slow",
+									"other",
+								])
+								.optional(),
+							comment: z.string().max(1000).optional(),
+							result_url: z.string().optional(),
+							idempotency_key: z.string().optional(),
+						}),
+					)
+					.max(20)
+					.describe("Array of feedback items (max 20)"),
+			},
+		},
+		async ({ workflow_id, feedback }) => {
+			try {
+				const result = await batchRateExecutions(workflow_id, { feedback });
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

@@ -465,6 +465,108 @@ export interface WorkflowDiffResponse {
 }
 
 // =========================================================================
+// Workflow Execution Feedback Types
+// =========================================================================
+
+export type ExecutionFeedbackRating = "positive" | "negative";
+
+export type ExecutionFeedbackSignalType =
+	| "result_thumbs_up"
+	| "result_thumbs_down";
+
+export type ExecutionFeedbackExecutionKind =
+	| "workflow_execution"
+	| "search_job"
+	| "crawl_job"
+	| "workflow_step";
+
+export type ExecutionFeedbackReasonCategory =
+	| "relevant_results"
+	| "accurate_information"
+	| "timely_alert"
+	| "good_formatting"
+	| "irrelevant_results"
+	| "missing_information"
+	| "outdated_content"
+	| "false_positive"
+	| "missed_alert"
+	| "too_slow"
+	| "other";
+
+export interface ExecutionFeedbackRecord {
+	id: string;
+	execution_id: string;
+	execution_kind: ExecutionFeedbackExecutionKind;
+	workflow_step_id: string | null;
+	signal_type: ExecutionFeedbackSignalType;
+	reason_category: ExecutionFeedbackReasonCategory | null;
+	comment: string | null;
+	result_url: string | null;
+	actor: {
+		type: "human" | "api" | "mcp";
+		id_hash: string;
+		model: string | null;
+	};
+	signal_source: "ui" | "api" | "mcp";
+	immediate_reward: number;
+	reward_version: number;
+	created_at: string;
+}
+
+export interface ExecutionFeedbackResponse {
+	schema_version: "execution_feedback_v1";
+	workflow_id: string;
+	execution_id: string;
+	status: "created" | "updated" | "idempotent_replay";
+	feedback: ExecutionFeedbackRecord;
+}
+
+export interface ExecutionFeedbackListResponse {
+	schema_version: "execution_feedback_v1";
+	workflow_id: string;
+	feedback: ExecutionFeedbackRecord[];
+	pagination: {
+		limit: number;
+		next_cursor: string | null;
+	};
+}
+
+export interface ExecutionFeedbackStatsResponse {
+	schema_version: "execution_feedback_v1";
+	workflow_id: string;
+	total_feedback: number;
+	thumbs_up_count: number;
+	thumbs_down_count: number;
+	positive_rate: number;
+	executions_with_feedback: number;
+	feedback_coverage_rate: number;
+	reason_completion_rate: number;
+	by_reason: Record<string, number>;
+	by_actor_type: Record<"human" | "api" | "mcp", number>;
+	trends: {
+		last_7d: { positive: number; negative: number };
+		last_30d: { positive: number; negative: number };
+	};
+	total_immediate_reward: number;
+}
+
+export interface ExecutionFeedbackBatchResult {
+	execution_id: string;
+	status: "created" | "updated" | "failed";
+	signal_id?: string;
+	error?: string;
+}
+
+export interface ExecutionFeedbackBatchResponse {
+	schema_version: "execution_feedback_v1";
+	workflow_id: string;
+	submitted: number;
+	succeeded: number;
+	failed: number;
+	results: ExecutionFeedbackBatchResult[];
+}
+
+// =========================================================================
 // Workflow Updates Digest Types (Compound Tool)
 // =========================================================================
 

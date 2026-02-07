@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type {
+	AssessIntentResponse,
 	AskResponse,
 	CrawlResponse,
 	CreateEntitySchemaResponse,
@@ -970,9 +971,9 @@ export async function planWorkflow(params: {
 	intent: string;
 	name?: string;
 	max_credits_per_execution?: number;
+	planning_budget?: number;
+	quality_mode?: "quality_first" | "balanced";
 	skip_entity_discovery?: boolean;
-	advanced?: boolean | "quick" | "standard" | "thorough" | "comprehensive";
-	research_budget?: number | null;
 }): Promise<PlanWorkflowResponse> {
 	const response = await fetch(`${ZIPF_API_BASE}/workflows/plan`, {
 		method: "POST",
@@ -980,6 +981,17 @@ export async function planWorkflow(params: {
 		body: JSON.stringify(params),
 	});
 	return handleResponse<PlanWorkflowResponse>(response);
+}
+
+export async function assessIntent(params: {
+	intent: string;
+}): Promise<AssessIntentResponse> {
+	const response = await fetch(`${ZIPF_API_BASE}/workflows/assess-intent`, {
+		method: "POST",
+		headers: getHeaders(),
+		body: JSON.stringify(params),
+	});
+	return handleResponse<AssessIntentResponse>(response);
 }
 
 // =========================================================================

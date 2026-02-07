@@ -4,6 +4,7 @@ import {
 	ApiError,
 	applyWorkflowRecovery,
 	ask,
+	assessIntent,
 	batchRateExecutions,
 	completeSession,
 	crawlWithPolling,
@@ -857,87 +858,102 @@ export function registerTools(server: McpServer): void {
 	);
 
 	// =========================================================================
+	// Workflow - Assess if monitoring intent is specific enough (FREE)
+	// =========================================================================
+	server.registerTool(
+		"zipfai_assess_intent",
+		{
+			description:
+				'Assess if a monitoring intent is specific enough to execute reliably (FREE). Returns a specificity score (1-10), identifies vague aspects, and suggests a more specific rewrite if needed. Use this before zipfai_plan_workflow to ensure your intent is clear and actionable.\n\n**Score interpretation:**\n• 8-10: Specific - ready to plan\n• 7: Borderline - may want to add details\n• 1-6: Vague - use the proposed_intent or add more detail\n\n**Example:**\n```\nzipfai_assess_intent({ intent: "Tell me when new LLMs release" })\n// Returns: score 3, suggests more specific intent with trigger conditions and sources\n```',
+			inputSchema: {
+				intent: z
+					.string()
+					.describe("The monitoring intent to assess (10-2000 chars)"),
+			},
+		},
+		async ({ intent }) => {
+			try {
+				const result = await assessIntent({ intent });
+
+				const response = {
+					assessment: result.assessment,
+					specificity_score: result.specificity_score,
+					is_actionable: result.is_actionable,
+					recommendation: result.recommendation,
+					...(result.proposed_intent && {
+						proposed_intent: result.proposed_intent,
+					}),
+					...(result.vague_aspects?.length && {
+						vague_aspects: result.vague_aspects,
+					}),
+					...(result.what_we_clarified?.length && {
+						what_we_clarified: result.what_we_clarified,
+					}),
+					inferred: result.inferred,
+				};
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
 	// Plan Workflow - Preview AI-planned workflow (FREE)
 	// =========================================================================
 	server.registerTool(
 		"zipfai_plan_workflow",
 		{
 			description:
-				"🌟 AI-planned multi-step workflow from natural language (FREE preview, advanced research costs credits). " +
-				"Describe what you want to monitor in plain English, and Claude generates a complete workflow. " +
-				"\n\n" +
-				"**SIMPLIFIED API:** Use `advanced` parameter to enable pre-planning research:\n" +
-				"• `advanced: true` or `advanced: 'standard'` - Balanced research (~30 credits)\n" +
-				"• `advanced: 'quick'` - Fast research (~10 credits)\n" +
-				"• `advanced: 'thorough'` - Deep research with query decomposition (~50 credits)\n" +
-				"• `advanced: 'comprehensive'` - Maximum depth (~100 credits)\n" +
-				"\n" +
-				"**Example:**\n" +
-				"```\n" +
-				"zipfai_plan_workflow({\n" +
-				'  intent: "Monitor NVIDIA product launches",\n' +
-				'  advanced: "standard"\n' +
-				"})\n" +
-				"```\n" +
-				"\n" +
-				"Use zipfai_create_workflow to deploy the generated plan.",
+				'🌟 AI-planned multi-step workflow from natural language (FREE preview). Describe what you want to monitor in plain English, and the hybrid planner generates a complete workflow.\n\n**Planner controls:**\n• `quality_mode: "quality_first"` (default) maximizes coverage/depth\n• `quality_mode: "balanced"` reduces cost/complexity\n• `planning_budget` guides budget-aware shaping\n\n**Example:**\n```\nzipfai_plan_workflow({\n  intent: "Monitor NVIDIA product launches",\n  quality_mode: "quality_first",\n  planning_budget: 40\n})\n```\n\nUse zipfai_create_workflow to deploy the generated plan.',
 			inputSchema: {
 				intent: z
 					.string()
 					.describe(
-						"Natural language description of what to monitor (10-2000 chars). Be specific about entities, data to extract, and alerting conditions.",
+						"Natural language description of what to monitor (10-2000 chars)",
 					),
 				name: z.string().optional().describe("Optional name for the workflow"),
 				max_credits_per_execution: z
 					.number()
 					.optional()
-					.describe("Budget limit per execution (default: no limit)"),
+					.describe("Budget limit per execution"),
+				planning_budget: z
+					.number()
+					.optional()
+					.describe(
+						"Planner budget hint (takes precedence over max_credits_per_execution)",
+					),
+				quality_mode: z
+					.enum(["quality_first", "balanced"])
+					.optional()
+					.describe(
+						"Planner profile: quality_first (default) or balanced",
+					),
 				skip_entity_discovery: z
 					.boolean()
 					.optional()
-					.describe(
-						"Skip entity discovery for faster response (default: false)",
-					),
-				advanced: z
-					.union([
-						z.boolean(),
-						z.enum(["quick", "standard", "thorough", "comprehensive"]),
-					])
-					.optional()
-					.describe(
-						"Enable advanced research before workflow generation. " +
-							"Set to true (uses 'standard' preset) or specify a preset: " +
-							"'quick' (~10 credits), 'standard' (~30 credits), 'thorough' (~50 credits), 'comprehensive' (~100 credits). " +
-							"Advanced research gathers real web data about entities and resolves URLs/addresses before generating the workflow.",
-					),
-				research_budget: z
-					.union([z.number().positive(), z.null()])
-					.optional()
-					.describe(
-						"Override the preset's research budget. Set any positive number for custom limit, " +
-							"or null for unlimited research (uses your credit balance). " +
-							"WARNING: Custom and unlimited modes can consume significant credits.",
-					),
+					.describe("Skip entity discovery for faster response"),
 			},
 		},
 		async ({
 			intent,
 			name,
 			max_credits_per_execution,
+			planning_budget,
+			quality_mode,
 			skip_entity_discovery,
-			advanced,
-			research_budget,
 		}) => {
 			try {
 				const result = await planWorkflow({
 					intent,
 					name: name ?? undefined,
 					max_credits_per_execution: max_credits_per_execution ?? undefined,
+					planning_budget: planning_budget ?? undefined,
+					quality_mode: quality_mode ?? undefined,
 					skip_entity_discovery: skip_entity_discovery ?? undefined,
-					advanced: advanced ?? undefined,
-					research_budget: research_budget ?? undefined,
-					// Note: user_id is not available in MCP context, so unlimited mode will fail
-					// Users should use the REST API directly for unlimited mode
 				});
 
 				return {

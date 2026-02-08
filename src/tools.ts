@@ -20,6 +20,8 @@ import {
 	getEntity,
 	getEntitySchema,
 	getEntitySignal,
+	getFeedbackImpact,
+	getFeedbackQueue,
 	getExecutionRatingStats,
 	getExecutionRatings,
 	getSessionTimeline,
@@ -1712,12 +1714,24 @@ export function registerTools(server: McpServer): void {
 		"zipfai_rate_execution",
 		{
 			description:
-				"Submit thumbs up/down feedback for a workflow execution (FREE). This improves workflow quality over time.",
+				"Rate any Zipf result — workflow execution, search, crawl, or ask (FREE). " +
+				"Use execution_id from response feedback hints. workflow_id is optional for standalone jobs.",
 			inputSchema: {
-				workflow_id: z.string().describe("Workflow ID"),
-				execution_id: z.string().describe("Execution ID from workflow timeline"),
+				workflow_id: z
+					.string()
+					.optional()
+					.describe("Workflow ID (optional for standalone search/crawl/ask jobs)"),
+				execution_id: z
+					.string()
+					.describe("Execution ID, search_job_id, crawl_id, or ask_id"),
 				execution_kind: z
-					.enum(["workflow_execution", "search_job", "crawl_job", "workflow_step"])
+					.enum([
+						"workflow_execution",
+						"search_job",
+						"crawl_job",
+						"workflow_step",
+						"ask_job",
+					])
 					.optional()
 					.describe("Execution record type"),
 				workflow_step_id: z
@@ -1907,9 +1921,13 @@ export function registerTools(server: McpServer): void {
 		"zipfai_batch_rate_executions",
 		{
 			description:
-				"Submit ratings for multiple executions in one request (FREE). Up to 20 items.",
+				"Submit ratings for multiple executions in one request (FREE). Up to 20 items. " +
+				"workflow_id is optional for standalone search/crawl/ask jobs.",
 			inputSchema: {
-				workflow_id: z.string().describe("Workflow ID"),
+				workflow_id: z
+					.string()
+					.optional()
+					.describe("Workflow ID (optional for standalone jobs)"),
 				feedback: z
 					.array(
 						z.object({
@@ -1920,6 +1938,7 @@ export function registerTools(server: McpServer): void {
 									"search_job",
 									"crawl_job",
 									"workflow_step",
+									"ask_job",
 								])
 								.optional(),
 							workflow_step_id: z.string().optional(),
@@ -1951,6 +1970,76 @@ export function registerTools(server: McpServer): void {
 		async ({ workflow_id, feedback }) => {
 			try {
 				const result = await batchRateExecutions(workflow_id, { feedback });
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Feedback Queue - Ranked unrated executions (FREE)
+	// =========================================================================
+	server.registerTool(
+		"zipfai_feedback_queue",
+		{
+			description:
+				"Get unrated executions ranked by feedback value (FREE). " +
+				"Returns items most worth rating, including standalone jobs.",
+			inputSchema: {
+				workflow_id: z
+					.string()
+					.optional()
+					.describe("Filter to a specific workflow"),
+				limit: z
+					.number()
+					.min(1)
+					.max(50)
+					.optional()
+					.default(10)
+					.describe("Number of items to return"),
+				include_standalone: z
+					.boolean()
+					.optional()
+					.default(true)
+					.describe("Include standalone search/crawl/ask jobs"),
+			},
+		},
+		async ({ workflow_id, limit, include_standalone }) => {
+			try {
+				const result = await getFeedbackQueue({
+					workflow_id: workflow_id ?? undefined,
+					limit: limit ?? 10,
+					include_standalone: include_standalone ?? true,
+				});
+
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error) {
+				return formatError(error);
+			}
+		},
+	);
+
+	// =========================================================================
+	// Feedback Impact - Closed-loop visibility (FREE)
+	// =========================================================================
+	server.registerTool(
+		"zipfai_feedback_impact",
+		{
+			description:
+				"See how your feedback is affecting workflow calibration and quality (FREE).",
+			inputSchema: {
+				workflow_id: z.string().describe("Workflow ID"),
+			},
+		},
+		async ({ workflow_id }) => {
+			try {
+				const result = await getFeedbackImpact(workflow_id);
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

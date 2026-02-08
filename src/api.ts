@@ -15,6 +15,8 @@ import type {
 	EntitySchema,
 	EntitySignal,
 	EntityStatus,
+	FeedbackImpactResponse,
+	FeedbackQueueResponse,
 	ExecutionFeedbackBatchResponse,
 	ExecutionFeedbackExecutionKind,
 	ExecutionFeedbackListResponse,
@@ -851,7 +853,7 @@ function getExecutionFeedbackHeaders(): Record<string, string> {
 }
 
 export async function rateExecution(
-	workflowId: string,
+	workflowId: string | undefined,
 	executionId: string,
 	params: {
 		execution_kind?: ExecutionFeedbackExecutionKind;
@@ -864,12 +866,18 @@ export async function rateExecution(
 		actor_model?: string;
 	},
 ): Promise<ExecutionFeedbackResponse> {
+	const endpoint = workflowId
+		? `${ZIPF_API_BASE}/workflows/${workflowId}/executions/${executionId}/feedback`
+		: `${ZIPF_API_BASE}/feedback`;
+
+	const body = workflowId ? params : { ...params, execution_id: executionId };
+
 	const response = await fetch(
-		`${ZIPF_API_BASE}/workflows/${workflowId}/executions/${executionId}/feedback`,
+		endpoint,
 		{
 			method: "POST",
 			headers: getExecutionFeedbackHeaders(),
-			body: JSON.stringify(params),
+			body: JSON.stringify(body),
 		},
 	);
 	return handleResponse<ExecutionFeedbackResponse>(response);
@@ -932,7 +940,7 @@ export async function getExecutionRatingStats(
 }
 
 export async function batchRateExecutions(
-	workflowId: string,
+	workflowId: string | undefined,
 	params: {
 		feedback: Array<{
 			execution_id: string;
@@ -946,8 +954,12 @@ export async function batchRateExecutions(
 		}>;
 	},
 ): Promise<ExecutionFeedbackBatchResponse> {
+	const endpoint = workflowId
+		? `${ZIPF_API_BASE}/workflows/${workflowId}/execution-feedback/batch`
+		: `${ZIPF_API_BASE}/feedback/batch`;
+
 	const response = await fetch(
-		`${ZIPF_API_BASE}/workflows/${workflowId}/execution-feedback/batch`,
+		endpoint,
 		{
 			method: "POST",
 			headers: getExecutionFeedbackHeaders(),
@@ -955,6 +967,41 @@ export async function batchRateExecutions(
 		},
 	);
 	return handleResponse<ExecutionFeedbackBatchResponse>(response);
+}
+
+export async function getFeedbackQueue(params?: {
+	workflow_id?: string;
+	include_standalone?: boolean;
+	limit?: number;
+}): Promise<FeedbackQueueResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.workflow_id) searchParams.set("workflow_id", params.workflow_id);
+	if (params?.include_standalone === false)
+		searchParams.set("include_standalone", "false");
+	if (params?.limit) searchParams.set("limit", String(params.limit));
+
+	const query = searchParams.toString();
+	const response = await fetch(
+		`${ZIPF_API_BASE}/feedback/queue${query ? `?${query}` : ""}`,
+		{
+			method: "GET",
+			headers: getExecutionFeedbackHeaders(),
+		},
+	);
+	return handleResponse<FeedbackQueueResponse>(response);
+}
+
+export async function getFeedbackImpact(
+	workflowId: string,
+): Promise<FeedbackImpactResponse> {
+	const response = await fetch(
+		`${ZIPF_API_BASE}/workflows/${workflowId}/feedback-impact`,
+		{
+			method: "GET",
+			headers: getExecutionFeedbackHeaders(),
+		},
+	);
+	return handleResponse<FeedbackImpactResponse>(response);
 }
 
 export async function deleteWorkflow(

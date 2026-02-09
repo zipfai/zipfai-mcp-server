@@ -499,7 +499,8 @@ export type ExecutionFeedbackExecutionKind =
 	| "workflow_execution"
 	| "search_job"
 	| "crawl_job"
-	| "workflow_step";
+	| "workflow_step"
+	| "ask_job";
 
 export type ExecutionFeedbackReasonCategory =
 	| "relevant_results"
@@ -536,7 +537,7 @@ export interface ExecutionFeedbackRecord {
 
 export interface ExecutionFeedbackResponse {
 	schema_version: "execution_feedback_v1";
-	workflow_id: string;
+	workflow_id?: string;
 	execution_id: string;
 	status: "created" | "updated" | "idempotent_replay";
 	feedback: ExecutionFeedbackRecord;
@@ -580,11 +581,63 @@ export interface ExecutionFeedbackBatchResult {
 
 export interface ExecutionFeedbackBatchResponse {
 	schema_version: "execution_feedback_v1";
-	workflow_id: string;
+	workflow_id?: string;
 	submitted: number;
 	succeeded: number;
 	failed: number;
 	results: ExecutionFeedbackBatchResult[];
+}
+
+export interface FeedbackQueueItem {
+	execution_id: string;
+	execution_kind: ExecutionFeedbackExecutionKind;
+	workflow_id: string | null;
+	workflow_name: string | null;
+	created_at: string;
+	score: number;
+	score_reasons: string[];
+	feedback_hint: {
+		suggested: boolean;
+		action: {
+			tool: string;
+			args: {
+				workflow_id?: string;
+				execution_id: string;
+				rating?: "positive" | "negative";
+			};
+		};
+		note: string;
+	};
+}
+
+export interface FeedbackQueueResponse {
+	items: FeedbackQueueItem[];
+	total_unrated: number;
+}
+
+export interface FeedbackImpactResponse {
+	workflow_id: string;
+	your_ratings: {
+		total: number;
+		positive: number;
+		negative: number;
+		coverage_rate: number;
+	};
+	calibration_impact: {
+		nl_condition_adjustments: number;
+		false_positive_reports: number;
+		current_confidence_threshold: number;
+		original_confidence_threshold: number;
+	} | null;
+	negative_patterns: {
+		top_reasons: Array<{ reason: string; count: number }>;
+		recommended_edits: string[];
+	};
+	community: {
+		total_ratings: number;
+		positive_rate: number;
+		actors: number;
+	};
 }
 
 // =========================================================================

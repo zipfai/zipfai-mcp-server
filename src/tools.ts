@@ -5,7 +5,6 @@ import {
 	applyWorkflowRecovery,
 	ask,
 	assessIntent,
-	batchRateExecutions,
 	completeSession,
 	crawlWithPolling,
 	createEntitySchema,
@@ -20,6 +19,7 @@ import {
 	getEntity,
 	getEntitySchema,
 	getEntitySignal,
+	getFeedbackImpact,
 	getExecutionRatingStats,
 	getExecutionRatings,
 	getSessionTimeline,
@@ -37,11 +37,11 @@ import {
 	listWorkflows,
 	planWorkflow,
 	queryEntities,
-	rateExecution,
 	research,
 	searchWithPolling,
 	sessionCrawl,
 	sessionSearch,
+	submitAssessments,
 	suggestSchema,
 	testWorkflowSlack,
 	updateEntity,
@@ -1351,13 +1351,29 @@ export function registerTools(server: McpServer): void {
 		"zipfai_get_workflow",
 		{
 			description:
-				"Get comprehensive workflow information including configuration and execution history (FREE).",
+				"Get workflow details with recent executions and quality diagnostics. Optionally answer quality_questions from a previous call — answers improve result quality and can auto-fix detected issues. FREE.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
+				assessments: z
+					.array(
+						z.object({
+							question_id: z.string(),
+							answer: z.string(),
+							context: z.string().max(500).optional(),
+						}),
+					)
+					.max(10)
+					.optional()
+					.describe(
+						"Answers to quality_questions from a previous response. Improves result quality for this and future calls.",
+					),
 			},
 		},
-		async ({ workflow_id }) => {
+		async ({ workflow_id, assessments }) => {
 			try {
+				if (assessments?.length) {
+					await submitAssessments(workflow_id, { assessments });
+				}
 				const result = await getWorkflowDetails(workflow_id);
 
 				return {
@@ -1651,13 +1667,29 @@ export function registerTools(server: McpServer): void {
 		"zipfai_workflow_timeline",
 		{
 			description:
-				"Get chronological execution history for a workflow (FREE). Shows last 50 executions.",
+				"Get chronological execution history for a workflow (FREE). Shows last 50 executions with quality diagnostics. Answer quality_questions to trigger auto-healing of detected issues.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
+				assessments: z
+					.array(
+						z.object({
+							question_id: z.string(),
+							answer: z.string(),
+							context: z.string().max(500).optional(),
+						}),
+					)
+					.max(10)
+					.optional()
+					.describe(
+						"Answers to quality_questions from a previous response. Improves result quality for this and future calls.",
+					),
 			},
 		},
-		async ({ workflow_id }) => {
+		async ({ workflow_id, assessments }) => {
 			try {
+				if (assessments?.length) {
+					await submitAssessments(workflow_id, { assessments });
+				}
 				const result = await getWorkflowTimeline(workflow_id);
 
 				return {
@@ -1676,7 +1708,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_workflow_diff",
 		{
 			description:
-				"Get what changed between consecutive workflow executions (FREE). Returns diffs instead of raw data. Changes are calculated by comparing each execution to its immediately previous execution (not to a global baseline). When `previous_execution_id` is null in a diff entry, it indicates the first execution.",
+				"Get what changed between workflow executions. Returns diffs with quality diagnostics. Answer quality_questions to trigger auto-healing of detected issues. FREE.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				limit: z
@@ -1687,94 +1719,29 @@ export function registerTools(server: McpServer): void {
 					.string()
 					.optional()
 					.describe("Only show diffs after this ISO timestamp"),
+				assessments: z
+					.array(
+						z.object({
+							question_id: z.string(),
+							answer: z.string(),
+							context: z.string().max(500).optional(),
+						}),
+					)
+					.max(10)
+					.optional()
+					.describe(
+						"Answers to quality_questions from a previous response. Improves result quality for this and future calls.",
+					),
 			},
 		},
-		async ({ workflow_id, limit, since }) => {
+		async ({ workflow_id, limit, since, assessments }) => {
 			try {
+				if (assessments?.length) {
+					await submitAssessments(workflow_id, { assessments });
+				}
 				const result = await getWorkflowDiff(workflow_id, {
 					limit: limit ?? undefined,
 					since: since ?? undefined,
-				});
-
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error) {
-				return formatError(error);
-			}
-		},
-	);
-
-	// =========================================================================
-	// Workflow Execution Feedback - Submit a rating
-	// =========================================================================
-	server.registerTool(
-		"zipfai_rate_execution",
-		{
-			description:
-				"Submit thumbs up/down feedback for a workflow execution (FREE). This improves workflow quality over time.",
-			inputSchema: {
-				workflow_id: z.string().describe("Workflow ID"),
-				execution_id: z.string().describe("Execution ID from workflow timeline"),
-				execution_kind: z
-					.enum(["workflow_execution", "search_job", "crawl_job", "workflow_step"])
-					.optional()
-					.describe("Execution record type"),
-				workflow_step_id: z
-					.string()
-					.optional()
-					.describe("Optional step ID for step-level feedback"),
-				rating: z
-					.enum(["positive", "negative"])
-					.describe("Was this execution helpful?"),
-				reason_category: z
-					.enum([
-						"relevant_results",
-						"accurate_information",
-						"timely_alert",
-						"good_formatting",
-						"irrelevant_results",
-						"missing_information",
-						"outdated_content",
-						"false_positive",
-						"missed_alert",
-						"too_slow",
-						"other",
-					])
-					.optional()
-					.describe("Reason taxonomy label"),
-				comment: z
-					.string()
-					.max(1000)
-					.optional()
-					.describe("Additional context (max 1000 chars)"),
-				result_url: z.string().optional().describe("Specific result URL being rated"),
-				idempotency_key: z.string().optional().describe("Optional idempotency key"),
-				actor_model: z.string().optional().describe("Model/provider identifier"),
-			},
-		},
-		async ({
-			workflow_id,
-			execution_id,
-			execution_kind,
-			workflow_step_id,
-			rating,
-			reason_category,
-			comment,
-			result_url,
-			idempotency_key,
-			actor_model,
-		}) => {
-			try {
-				const result = await rateExecution(workflow_id, execution_id, {
-					execution_kind: execution_kind ?? undefined,
-					workflow_step_id: workflow_step_id ?? undefined,
-					rating,
-					reason_category: reason_category ?? undefined,
-					comment: comment ?? undefined,
-					result_url: result_url ?? undefined,
-					idempotency_key: idempotency_key ?? undefined,
-					actor_model: actor_model ?? undefined,
 				});
 
 				return {
@@ -1793,7 +1760,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_execution_ratings",
 		{
 			description:
-				"Get execution feedback signals for a workflow (FREE). Useful for identifying what worked and what failed.",
+				"List feedback signals for a workflow (FREE). Shows ratings and assessment answers. Use when the user asks 'show me the ratings for this workflow'.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				execution_id: z.string().optional().describe("Filter to specific execution"),
@@ -1882,7 +1849,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_execution_rating_stats",
 		{
 			description:
-				"Get aggregated execution feedback stats for a workflow (FREE). Includes positive rate, top issues, and reward totals.",
+				"Quality breakdown by execution type — shows which parts of a workflow are healthy vs underperforming. Use when the user asks 'how is this workflow doing?' or 'what\\'s the quality like?' FREE.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 			},
@@ -1901,56 +1868,20 @@ export function registerTools(server: McpServer): void {
 	);
 
 	// =========================================================================
-	// Workflow Execution Feedback - Batch ratings
+	// Feedback Impact - Closed-loop visibility (FREE)
 	// =========================================================================
 	server.registerTool(
-		"zipfai_batch_rate_executions",
+		"zipfai_feedback_impact",
 		{
 			description:
-				"Submit ratings for multiple executions in one request (FREE). Up to 20 items.",
+				"See how feedback and assessments have shaped a workflow (FREE). Shows calibration adjustments, healing actions applied, recommended edits, and feedback coverage.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
-				feedback: z
-					.array(
-						z.object({
-							execution_id: z.string(),
-							execution_kind: z
-								.enum([
-									"workflow_execution",
-									"search_job",
-									"crawl_job",
-									"workflow_step",
-								])
-								.optional(),
-							workflow_step_id: z.string().optional(),
-							rating: z.enum(["positive", "negative"]),
-							reason_category: z
-								.enum([
-									"relevant_results",
-									"accurate_information",
-									"timely_alert",
-									"good_formatting",
-									"irrelevant_results",
-									"missing_information",
-									"outdated_content",
-									"false_positive",
-									"missed_alert",
-									"too_slow",
-									"other",
-								])
-								.optional(),
-							comment: z.string().max(1000).optional(),
-							result_url: z.string().optional(),
-							idempotency_key: z.string().optional(),
-						}),
-					)
-					.max(20)
-					.describe("Array of feedback items (max 20)"),
 			},
 		},
-		async ({ workflow_id, feedback }) => {
+		async ({ workflow_id }) => {
 			try {
-				const result = await batchRateExecutions(workflow_id, { feedback });
+				const result = await getFeedbackImpact(workflow_id);
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -1967,24 +1898,26 @@ export function registerTools(server: McpServer): void {
 	server.registerTool(
 		"zipfai_workflow_updates",
 		{
-			description: `Get a consolidated digest of all workflow updates since your last check (FREE). Returns a single summary showing which workflows have changes, which triggered their stop conditions, and what changed - eliminating the need to check each workflow individually. Perfect for daily/weekly monitoring routines.
+			description: `Consolidated digest of all workflow updates. Includes quality_questions for workflows with detected issues. Answering them triggers auto-fixes. One call replaces checking each workflow individually. FREE.
 
 Key benefits:
 - One call replaces N calls (list + timeline + diff for each)
-- Smart signal scoring (0-100) ranks workflows by importance: signal_score and signal_level (urgent/notable/routine/noise)
-- Pre-sorted by signal score: urgent first, then notable, then routine
-- Includes semantic URL summaries with titles, snippets, and published dates
-- Cross-workflow correlation: identifies shared URLs appearing across multiple monitors
-- Concise summaries optimized for AI agent consumption
-- Optional verbose mode for full diff details
-
-Signal scoring factors: stop condition triggers, document types (legal/academic/news), churn rate, new domains, extraction changes, workflow priority
+- Pre-sorted by priority: triggered first, then changed, then recent
+- Signal/noise scoring (0-100) with urgency classification (urgent/notable/routine/noise)
+- Cross-workflow correlation detection for related changes
+- Quality diagnostics with actionable questions
 
 Recommended workflow:
 1. Call zipfai_workflow_updates to get overview
-2. Check correlations array for cross-workflow patterns (URLs appearing in multiple monitors)
-3. Focus on urgent/notable workflows (signal_level)
-4. For interesting workflows, use zipfai_workflow_diff for details`,
+2. Answer any quality_questions via the assessments parameter
+3. For interesting workflows, use zipfai_workflow_diff for details
+4. Take action based on findings
+
+Output formats:
+- json (default): Full structured data with all fields
+- briefing: Human-readable markdown report for direct display
+- briefing_llm: Markdown optimized for LLM context (denser, more structured)
+- compact: Minimal JSON for token-constrained contexts`,
 			inputSchema: {
 				since: z
 					.string()
@@ -2016,10 +1949,45 @@ Recommended workflow:
 					.describe(
 						"Output format: 'json' (default, full structured response), 'briefing' (markdown executive summary), 'briefing_llm' (LLM-synthesized briefing), 'compact' (minimal JSON with IDs and summaries only).",
 					),
+				assessments: z
+					.array(
+						z.object({
+							workflow_id: z.string(),
+							question_id: z.string(),
+							answer: z.string(),
+							context: z.string().max(500).optional(),
+						}),
+					)
+					.max(10)
+					.optional()
+					.describe(
+						"Answers to quality_questions from a previous response. Each item includes workflow_id since this endpoint spans multiple workflows.",
+					),
 			},
 		},
-		async ({ since, include_inactive, max_workflows, verbose, format }) => {
+		async ({ since, include_inactive, max_workflows, verbose, format, assessments }) => {
 			try {
+				// Submit assessments grouped by workflow_id
+				if (assessments?.length) {
+					const byWorkflow = new Map<
+						string,
+						Array<{ question_id: string; answer: string; context?: string }>
+					>();
+					for (const a of assessments) {
+						const existing = byWorkflow.get(a.workflow_id) || [];
+						existing.push({
+							question_id: a.question_id,
+							answer: a.answer,
+							context: a.context ?? undefined,
+						});
+						byWorkflow.set(a.workflow_id, existing);
+					}
+					await Promise.all(
+						Array.from(byWorkflow.entries()).map(([wfId, items]) =>
+							submitAssessments(wfId, { assessments: items }),
+						),
+					);
+				}
 				const result = await getWorkflowUpdatesDigest({
 					since: since ?? undefined,
 					include_inactive: include_inactive ?? undefined,

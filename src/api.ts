@@ -852,6 +852,22 @@ function getExecutionFeedbackHeaders(): Record<string, string> {
 	});
 }
 
+export async function submitAssessments(
+	workflowId: string,
+	params: {
+		assessments: Array<{ question_id: string; answer: string; context?: string }>;
+	},
+) {
+	const endpoint = `/workflows/${workflowId}/assessments`;
+	const url = `${ZIPF_API_BASE}${endpoint}`;
+	const response = await fetch(url, {
+		method: "POST",
+		headers: getHeaders({ "X-Zipf-Signal-Source": "mcp" }),
+		body: JSON.stringify(params),
+	});
+	return handleResponse(response);
+}
+
 export async function rateExecution(
 	workflowId: string | undefined,
 	executionId: string,

@@ -738,6 +738,27 @@ export interface PlanWorkflowResponse {
 	reasoning: string;
 }
 
+export interface AssessIntentResponse {
+	intent: string;
+	assessment: 'specific' | 'vague';
+	specificity_score: number;
+	is_actionable: boolean;
+	recommendation: string;
+	vague_aspects?: string[];
+	proposed_intent?: string;
+	what_we_clarified?: string[];
+	inferred: {
+		trigger_conditions: string[];
+		exclusions: string[];
+		entities: string[];
+		source_types: string[];
+		suggested_cadence: string;
+		monitoring_type: string[];
+		extraction_fields?: string[];
+	};
+	reasoning: string;
+}
+
 // =========================================================================
 // Entity API Types
 // =========================================================================

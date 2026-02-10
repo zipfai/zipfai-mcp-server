@@ -855,7 +855,7 @@ function getExecutionFeedbackHeaders(): Record<string, string> {
 export async function submitAssessments(
 	workflowId: string,
 	params: {
-		assessments: Array<{ question_id: string; answer: string; context?: string }>;
+		assessments: Array<{ question_id: string; answer: string; context?: string; execution_id?: string }>;
 	},
 ) {
 	const endpoint = `/workflows/${workflowId}/assessments`;

@@ -1360,24 +1360,29 @@ export function registerTools(server: McpServer): void {
 							question_id: z.string(),
 							answer: z.string(),
 							context: z.string().max(500).optional(),
+							execution_id: z.string().optional(),
 						}),
 					)
 					.max(10)
 					.optional()
 					.describe(
-						"Answers to quality_questions from a previous response. Improves result quality for this and future calls.",
+						"Answers to quality_questions from a previous response. Include execution_id from quality_questions[*].about.execution_id for exact execution attribution.",
 					),
 			},
 		},
 		async ({ workflow_id, assessments }) => {
 			try {
+				let assessmentSubmission: unknown | undefined;
 				if (assessments?.length) {
-					await submitAssessments(workflow_id, { assessments });
+					assessmentSubmission = await submitAssessments(workflow_id, { assessments });
 				}
 				const result = await getWorkflowDetails(workflow_id);
+				const response = assessmentSubmission
+					? { ...(result as unknown as Record<string, unknown>), assessment_submission: assessmentSubmission }
+					: result;
 
 				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
 				};
 			} catch (error) {
 				return formatError(error);
@@ -1676,24 +1681,29 @@ export function registerTools(server: McpServer): void {
 							question_id: z.string(),
 							answer: z.string(),
 							context: z.string().max(500).optional(),
+							execution_id: z.string().optional(),
 						}),
 					)
 					.max(10)
 					.optional()
 					.describe(
-						"Answers to quality_questions from a previous response. Improves result quality for this and future calls.",
+						"Answers to quality_questions from a previous response. Include execution_id from quality_questions[*].about.execution_id for exact execution attribution.",
 					),
 			},
 		},
 		async ({ workflow_id, assessments }) => {
 			try {
+				let assessmentSubmission: unknown | undefined;
 				if (assessments?.length) {
-					await submitAssessments(workflow_id, { assessments });
+					assessmentSubmission = await submitAssessments(workflow_id, { assessments });
 				}
 				const result = await getWorkflowTimeline(workflow_id);
+				const response = assessmentSubmission
+					? { ...(result as unknown as Record<string, unknown>), assessment_submission: assessmentSubmission }
+					: result;
 
 				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
 				};
 			} catch (error) {
 				return formatError(error);
@@ -1725,27 +1735,32 @@ export function registerTools(server: McpServer): void {
 							question_id: z.string(),
 							answer: z.string(),
 							context: z.string().max(500).optional(),
+							execution_id: z.string().optional(),
 						}),
 					)
 					.max(10)
 					.optional()
 					.describe(
-						"Answers to quality_questions from a previous response. Improves result quality for this and future calls.",
+						"Answers to quality_questions from a previous response. Include execution_id from quality_questions[*].about.execution_id for exact execution attribution.",
 					),
 			},
 		},
 		async ({ workflow_id, limit, since, assessments }) => {
 			try {
+				let assessmentSubmission: unknown | undefined;
 				if (assessments?.length) {
-					await submitAssessments(workflow_id, { assessments });
+					assessmentSubmission = await submitAssessments(workflow_id, { assessments });
 				}
 				const result = await getWorkflowDiff(workflow_id, {
 					limit: limit ?? undefined,
 					since: since ?? undefined,
 				});
+				const response = assessmentSubmission
+					? { ...(result as unknown as Record<string, unknown>), assessment_submission: assessmentSubmission }
+					: result;
 
 				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
 				};
 			} catch (error) {
 				return formatError(error);
@@ -1956,22 +1971,24 @@ Output formats:
 							question_id: z.string(),
 							answer: z.string(),
 							context: z.string().max(500).optional(),
+							execution_id: z.string().optional(),
 						}),
 					)
 					.max(10)
 					.optional()
 					.describe(
-						"Answers to quality_questions from a previous response. Each item includes workflow_id since this endpoint spans multiple workflows.",
+						"Answers to quality_questions from a previous response. Each item includes workflow_id since this endpoint spans multiple workflows. Include execution_id from quality_questions[*].about.execution_id for exact attribution.",
 					),
 			},
 		},
 		async ({ since, include_inactive, max_workflows, verbose, format, assessments }) => {
 			try {
+				let assessmentSubmission: Array<{ workflow_id: string; result: unknown }> = [];
 				// Submit assessments grouped by workflow_id
 				if (assessments?.length) {
 					const byWorkflow = new Map<
 						string,
-						Array<{ question_id: string; answer: string; context?: string }>
+						Array<{ question_id: string; answer: string; context?: string; execution_id?: string }>
 					>();
 					for (const a of assessments) {
 						const existing = byWorkflow.get(a.workflow_id) || [];
@@ -1979,13 +1996,15 @@ Output formats:
 							question_id: a.question_id,
 							answer: a.answer,
 							context: a.context ?? undefined,
+							execution_id: a.execution_id ?? undefined,
 						});
 						byWorkflow.set(a.workflow_id, existing);
 					}
-					await Promise.all(
-						Array.from(byWorkflow.entries()).map(([wfId, items]) =>
-							submitAssessments(wfId, { assessments: items }),
-						),
+					assessmentSubmission = await Promise.all(
+						Array.from(byWorkflow.entries()).map(async ([wfId, items]) => ({
+							workflow_id: wfId,
+							result: await submitAssessments(wfId, { assessments: items }),
+						})),
 					);
 				}
 				const result = await getWorkflowUpdatesDigest({
@@ -1995,6 +2014,30 @@ Output formats:
 					verbose: verbose ?? undefined,
 					format: format ?? undefined,
 				});
+				if (assessmentSubmission.length > 0) {
+					if (typeof result === "string") {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `${result}\n\nassessment_submission:\n${JSON.stringify(assessmentSubmission, null, 2)}`,
+								},
+							],
+						};
+					}
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(
+									{ ...(result as unknown as Record<string, unknown>), assessment_submission: assessmentSubmission },
+									null,
+									2,
+								),
+							},
+						],
+					};
+				}
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

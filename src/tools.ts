@@ -858,37 +858,45 @@ export function registerTools(server: McpServer): void {
 	);
 
 	// =========================================================================
-	// Workflow - Assess if monitoring intent is specific enough (FREE)
+	// Assess Intent - Check if monitoring intent is specific enough (FREE)
 	// =========================================================================
 	server.registerTool(
 		"zipfai_assess_intent",
 		{
 			description:
-				'Assess if a monitoring intent is specific enough to execute reliably (FREE). Returns a specificity score (1-10), identifies vague aspects, and suggests a more specific rewrite if needed. Use this before zipfai_plan_workflow to ensure your intent is clear and actionable.\n\n**Score interpretation:**\n• 8-10: Specific - ready to plan\n• 7: Borderline - may want to add details\n• 1-6: Vague - use the proposed_intent or add more detail\n\n**Example:**\n```\nzipfai_assess_intent({ intent: "Tell me when new LLMs release" })\n// Returns: score 3, suggests more specific intent with trigger conditions and sources\n```',
+				"Assess if a monitoring intent is specific enough to execute reliably (FREE). " +
+				"Returns a specificity score (1-10), identifies vague aspects, and suggests a more specific rewrite if needed. " +
+				"Use this before zipfai_plan_workflow to ensure your intent is clear and actionable.\n\n" +
+				"**Score interpretation:**\n" +
+				"• 8-10: Specific - ready to plan\n" +
+				"• 7: Borderline - may want to add details\n" +
+				"• 1-6: Vague - use the proposed_intent or add more detail\n\n" +
+				"**Example:**\n" +
+				"```\n" +
+				'zipfai_assess_intent({ intent: "Tell me when new LLMs release" })\n' +
+				"// Returns: score 3, suggests more specific intent with trigger conditions and sources\n" +
+				"```",
 			inputSchema: {
 				intent: z
 					.string()
-					.describe("The monitoring intent to assess (10-2000 chars)"),
+					.describe(
+						"The monitoring intent to assess (10-2000 chars). Describe what you want to monitor.",
+					),
 			},
 		},
 		async ({ intent }) => {
 			try {
 				const result = await assessIntent({ intent });
 
+				// Format agent-friendly response
 				const response = {
 					assessment: result.assessment,
 					specificity_score: result.specificity_score,
 					is_actionable: result.is_actionable,
 					recommendation: result.recommendation,
-					...(result.proposed_intent && {
-						proposed_intent: result.proposed_intent,
-					}),
-					...(result.vague_aspects?.length && {
-						vague_aspects: result.vague_aspects,
-					}),
-					...(result.what_we_clarified?.length && {
-						what_we_clarified: result.what_we_clarified,
-					}),
+					...(result.proposed_intent && { proposed_intent: result.proposed_intent }),
+					...(result.vague_aspects?.length && { vague_aspects: result.vague_aspects }),
+					...(result.what_we_clarified?.length && { what_we_clarified: result.what_we_clarified }),
 					inferred: result.inferred,
 				};
 

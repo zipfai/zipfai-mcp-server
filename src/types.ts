@@ -374,6 +374,7 @@ export interface ListWorkflowsResponse {
 		total: number;
 		limit: number;
 		offset: number;
+		hasMore?: boolean;
 	};
 }
 
@@ -719,6 +720,9 @@ export interface WorkflowUpdatesDigestResponse {
 	since: string;
 	checked_at: string;
 	total_workflows: number;
+	total_workflows_scanned?: number;
+	workflows_truncated?: boolean;
+	max_workflows_applied?: number;
 	workflows_with_changes: number;
 	triggered_workflows: number;
 	total_executions_since: number;

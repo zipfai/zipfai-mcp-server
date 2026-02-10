@@ -1372,22 +1372,65 @@ export async function getWorkflowUpdatesDigest(params?: {
 	const since =
 		params?.since ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 	const includeInactive = params?.include_inactive ?? false;
-	const maxWorkflows = Math.min(params?.max_workflows ?? 20, 50);
+	const maxWorkflowsApplied = Math.max(
+		1,
+		Math.min(params?.max_workflows ?? 500, 1000),
+	);
 	const verbose = params?.verbose ?? false;
 	const format = params?.format ?? "json";
 
-	// Step 1: List all workflows
-	const workflows = await listWorkflows({
-		limit: maxWorkflows,
-		status: includeInactive ? undefined : "active",
-	});
+	// Step 1: List workflows with pagination (avoid silent truncation at 20)
+	const allWorkflows: ListWorkflowsResponse["workflows"] = [];
+	let offset = 0;
+	let totalAvailable: number | undefined;
+	let reachedEnd = false;
 
-	if (!workflows.workflows || workflows.workflows.length === 0) {
+	while (allWorkflows.length < maxWorkflowsApplied) {
+		const pageLimit = Math.min(100, maxWorkflowsApplied - allWorkflows.length);
+		const page = await listWorkflows({
+			limit: pageLimit,
+			offset,
+			status: includeInactive ? undefined : "active",
+		});
+
+		const batch = page.workflows || [];
+		if (
+			totalAvailable === undefined &&
+			typeof page.pagination?.total === "number"
+		) {
+			totalAvailable = page.pagination.total;
+		}
+
+		allWorkflows.push(...batch);
+
+		const hasMoreFromApi =
+			typeof page.pagination?.hasMore === "boolean"
+				? page.pagination.hasMore
+				: batch.length === pageLimit;
+
+		if (!hasMoreFromApi || batch.length === 0) {
+			reachedEnd = true;
+			break;
+		}
+
+		offset += batch.length;
+	}
+
+	const workflowsTruncated =
+		totalAvailable !== undefined
+			? allWorkflows.length < totalAvailable
+			: !reachedEnd && allWorkflows.length >= maxWorkflowsApplied;
+	const totalWorkflowsAvailable = totalAvailable ?? allWorkflows.length;
+
+	if (!allWorkflows || allWorkflows.length === 0) {
 		return {
 			summary: "No workflows found.",
 			since: since,
 			checked_at: new Date().toISOString(),
 			total_workflows: 0,
+			total_workflows_scanned: 0,
+			workflows_truncated: false,
+			max_workflows_applied: maxWorkflowsApplied,
 			workflows_with_changes: 0,
 			triggered_workflows: 0,
 			total_executions_since: 0,
@@ -1397,7 +1440,7 @@ export async function getWorkflowUpdatesDigest(params?: {
 
 	// Step 2: Fetch timeline and diff for each workflow in parallel
 	const workflowDigests = await Promise.all(
-		workflows.workflows.map(async (workflow): Promise<WorkflowDigest> => {
+		allWorkflows.map(async (workflow): Promise<WorkflowDigest> => {
 			try {
 				// Fetch timeline (last few executions)
 				const timeline = await getWorkflowTimeline(workflow.id);
@@ -1551,12 +1594,18 @@ export async function getWorkflowUpdatesDigest(params?: {
 	if (!summary) {
 		summary = `✓ All quiet. ${sortedDigests.length} workflows checked, no changes since ${since}.`;
 	}
+	if (workflowsTruncated) {
+		summary += ` Showing ${sortedDigests.length} of ${totalWorkflowsAvailable} available workflows (max_workflows=${maxWorkflowsApplied}).`;
+	}
 
 	const baseResponse = {
 		summary: summary.trim(),
 		since: since,
 		checked_at: new Date().toISOString(),
-		total_workflows: sortedDigests.length,
+		total_workflows: totalWorkflowsAvailable,
+		total_workflows_scanned: sortedDigests.length,
+		workflows_truncated: workflowsTruncated,
+		max_workflows_applied: maxWorkflowsApplied,
 		workflows_with_changes: workflowsWithChanges,
 		triggered_workflows: triggeredWorkflowsList.length,
 		total_executions_since: totalExecutions,

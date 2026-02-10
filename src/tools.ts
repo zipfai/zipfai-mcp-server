@@ -82,6 +82,377 @@ function formatError(error: unknown): {
 	};
 }
 
+type QualityLoopConfidence = "high" | "medium";
+
+interface QualityLoopQuestion {
+	id: string;
+	options: string[];
+	observationType?: string;
+	question?: string;
+	executionId?: string;
+}
+
+interface QualityLoopSuggestedAssessment {
+	question_id: string;
+	answer: string;
+	execution_id?: string;
+	confidence: QualityLoopConfidence;
+	rationale: string;
+}
+
+interface QualityLoopSuggestedAssessmentWithWorkflow
+	extends QualityLoopSuggestedAssessment {
+	workflow_id: string;
+}
+
+const OBSERVATION_ANSWER_PREFERENCES: Record<string, string[]> = {
+	crawl_underperformance: ["insufficient"],
+	step_failure: ["critical"],
+	empty_findings: ["needs_adjustment"],
+	high_filtering: ["too_aggressive"],
+	aggregate_quality: ["too_selective"],
+	nl_condition_triggered: ["false_alarm"],
+	execution_failure: ["needs_adjustment"],
+	high_result_churn: ["unstable_results"],
+};
+
+const OBSERVATION_RATIONALES: Record<string, string> = {
+	crawl_underperformance:
+		"Low crawl coverage typically indicates missing information for monitoring.",
+	step_failure:
+		"Failed critical steps usually reduce confidence in workflow output quality.",
+	empty_findings:
+		"Repeated empty findings often mean query/target drift and need adjustment.",
+	high_filtering:
+		"Heavy filtering can hide relevant signals and usually warrants threshold relaxation.",
+	aggregate_quality:
+		"Low aggregate coverage suggests summaries may omit relevant evidence.",
+	nl_condition_triggered:
+		"False alarms from NL conditions benefit from immediate calibration feedback.",
+	execution_failure:
+		"Execution failures should be treated as negative quality until corrected.",
+	high_result_churn:
+		"High churn often indicates unstable retrieval quality or noisy sources.",
+};
+
+const GENERIC_NEGATIVE_PREFERENCES = [
+	"needs_adjustment",
+	"insufficient",
+	"too_aggressive",
+	"too_selective",
+	"critical",
+	"unstable_results",
+];
+
+function asObject(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function asString(value: unknown): string | null {
+	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter(
+		(item): item is string => typeof item === "string" && item.length > 0,
+	);
+}
+
+function extractQualityLoopQuestion(input: unknown): QualityLoopQuestion | null {
+	const obj = asObject(input);
+	if (!obj) return null;
+
+	const id = asString(obj.id);
+	const options = asStringArray(obj.options);
+	if (!id || options.length === 0) return null;
+
+	const about = asObject(obj.about);
+	return {
+		id,
+		options,
+		observationType: asString(obj.observation_type) ?? undefined,
+		question: asString(obj.question) ?? undefined,
+		executionId: asString(about?.execution_id) ?? undefined,
+	};
+}
+
+function suggestAssessmentForQuestion(
+	question: QualityLoopQuestion,
+): QualityLoopSuggestedAssessment | null {
+	const candidates = question.observationType
+		? OBSERVATION_ANSWER_PREFERENCES[question.observationType] || []
+		: [];
+	const fallbackCandidates = [...candidates, ...GENERIC_NEGATIVE_PREFERENCES];
+	const answer = fallbackCandidates.find((candidate) =>
+		question.options.includes(candidate),
+	);
+	if (!answer) return null;
+
+	const confidence: QualityLoopConfidence = candidates.includes(answer)
+		? "high"
+		: "medium";
+	return {
+		question_id: question.id,
+		answer,
+		execution_id: question.executionId,
+		confidence,
+		rationale:
+			(question.observationType && OBSERVATION_RATIONALES[question.observationType]) ||
+			"This anomaly likely indicates reduced workflow quality and should be assessed before continuing.",
+	};
+}
+
+function extractTopLevelQuestions(payload: unknown): QualityLoopQuestion[] {
+	const obj = asObject(payload);
+	if (!obj) return [];
+	const questions = Array.isArray(obj.quality_questions) ? obj.quality_questions : [];
+	return questions
+		.map(extractQualityLoopQuestion)
+		.filter((question): question is QualityLoopQuestion => question !== null);
+}
+
+function buildSingleWorkflowQualityLoopHint(params: {
+	payload: unknown;
+	workflowId: string;
+	toolName:
+		| "zipfai_get_workflow"
+		| "zipfai_workflow_timeline"
+		| "zipfai_workflow_diff";
+	assessmentsSubmitted: boolean;
+}): Record<string, unknown> | null {
+	const questions = extractTopLevelQuestions(params.payload);
+
+	if (params.assessmentsSubmitted) {
+		const nextTool =
+			params.toolName === "zipfai_workflow_diff"
+				? {
+						tool: "zipfai_get_workflow_recovery_suggestions",
+						arguments: { workflow_id: params.workflowId },
+						reason:
+							"Check whether actionable recovery steps are now available for the assessed issues.",
+				  }
+				: {
+						tool: "zipfai_workflow_diff",
+						arguments: { workflow_id: params.workflowId, limit: 10 },
+						reason:
+							"Review execution deltas after assessment submission to verify quality improvements.",
+				  };
+
+		return {
+			mode: "post_assessment_continue",
+			rationale:
+				"Assessments were submitted. Continue immediately to validate impact and capture next actions.",
+			next_tool_call: nextTool,
+			recommended_chain: [
+				{
+					step: 1,
+					action: "continue_analysis",
+					call: nextTool,
+				},
+			],
+		};
+	}
+
+	if (questions.length === 0) return null;
+
+	const drafts = questions
+		.map(suggestAssessmentForQuestion)
+		.filter(
+			(draft): draft is QualityLoopSuggestedAssessment => draft !== null,
+		)
+		.slice(0, 5);
+
+	const operationalIssue = questions.some((q) =>
+		["execution_failure", "step_failure", "crawl_underperformance"].includes(
+			q.observationType || "",
+		),
+	);
+
+	const nextTool = operationalIssue
+		? {
+				tool: "zipfai_get_workflow_recovery_suggestions",
+				arguments: { workflow_id: params.workflowId },
+				reason:
+					"Operational anomalies detected; fetch recovery options after assessments are applied.",
+		  }
+		: {
+				tool: "zipfai_workflow_diff",
+				arguments: { workflow_id: params.workflowId, limit: 10 },
+				reason:
+					"After assessments, inspect change deltas to confirm improved output quality.",
+		  };
+
+	const hint: Record<string, unknown> = {
+		mode: "assess_then_continue",
+		rationale:
+			"Quality questions were detected. Submitting assessments now usually yields better diagnostics on the very next tool call.",
+		question_count: questions.length,
+		next_tool_call: nextTool,
+	};
+
+	if (drafts.length > 0) {
+		const applyAssessmentsCall = {
+			tool: params.toolName,
+			arguments: {
+				workflow_id: params.workflowId,
+				assessments: drafts.map((draft) => ({
+					question_id: draft.question_id,
+					answer: draft.answer,
+					execution_id: draft.execution_id,
+				})),
+			},
+			expected_outcome:
+				"Returns assessment_submission and refreshed diagnostics in one call.",
+		};
+		hint.suggested_assessments = drafts;
+		hint.apply_assessments_call = applyAssessmentsCall;
+		hint.recommended_chain = [
+			{
+				step: 1,
+				action: "submit_assessments",
+				call: applyAssessmentsCall,
+			},
+			{
+				step: 2,
+				action: "continue_analysis",
+				call: nextTool,
+			},
+		];
+	} else {
+		hint.recommended_chain = [
+			{
+				step: 1,
+				action: "continue_analysis",
+				call: nextTool,
+			},
+		];
+	}
+
+	return hint;
+}
+
+function buildWorkflowUpdatesQualityLoopHint(params: {
+	payload: unknown;
+	assessmentsSubmitted: boolean;
+	assessmentWorkflowIds?: string[];
+}): Record<string, unknown> | null {
+	const obj = asObject(params.payload);
+	if (!obj) return null;
+	const workflows = Array.isArray(obj.workflows) ? obj.workflows : [];
+
+	const drafts: QualityLoopSuggestedAssessmentWithWorkflow[] = [];
+	for (const workflow of workflows) {
+		const wfObj = asObject(workflow);
+		if (!wfObj) continue;
+		const workflowId = asString(wfObj.workflow_id);
+		if (!workflowId) continue;
+		const questions = Array.isArray(wfObj.quality_questions)
+			? wfObj.quality_questions
+			: [];
+		for (const question of questions) {
+			const parsed = extractQualityLoopQuestion(question);
+			if (!parsed) continue;
+			const suggested = suggestAssessmentForQuestion(parsed);
+			if (!suggested) continue;
+			drafts.push({
+				workflow_id: workflowId,
+				...suggested,
+			});
+			if (drafts.length >= 10) break;
+		}
+		if (drafts.length >= 10) break;
+	}
+
+	const firstWorkflowId =
+		(params.assessmentWorkflowIds && params.assessmentWorkflowIds[0]) ||
+		drafts[0]?.workflow_id ||
+		null;
+
+	if (params.assessmentsSubmitted) {
+		const nextTool = firstWorkflowId
+			? {
+					tool: "zipfai_workflow_diff",
+					arguments: { workflow_id: firstWorkflowId, limit: 10 },
+					reason:
+						"Inspect the highest-priority workflow after submitting digest-level assessments.",
+			  }
+			: undefined;
+
+		return {
+			mode: "post_assessment_continue",
+			rationale:
+				"Assessments were submitted from the digest. Continue into per-workflow inspection while context is fresh.",
+			next_tool_call: nextTool,
+			recommended_chain: nextTool
+				? [
+						{
+							step: 1,
+							action: "continue_analysis",
+							call: nextTool,
+						},
+				  ]
+				: undefined,
+		};
+	}
+
+	if (drafts.length === 0) return null;
+
+	const applyAssessmentsCall = {
+		tool: "zipfai_workflow_updates",
+		arguments: {
+			format: "json",
+			assessments: drafts.map((draft) => ({
+				workflow_id: draft.workflow_id,
+				question_id: draft.question_id,
+				answer: draft.answer,
+				execution_id: draft.execution_id,
+			})),
+		},
+		expected_outcome:
+			"Returns assessment_submission plus an updated digest in one call.",
+	};
+
+	const nextToolCall = firstWorkflowId
+		? {
+				tool: "zipfai_workflow_diff",
+				arguments: { workflow_id: firstWorkflowId, limit: 10 },
+				reason: "After assessments, inspect the top impacted workflow in detail.",
+		  }
+		: undefined;
+
+	return {
+		mode: "assess_then_continue",
+		rationale:
+			"Digest includes assessable anomalies. Applying suggested assessments first reduces follow-up ambiguity and improves next-step diagnostics.",
+		suggested_assessments: drafts,
+		apply_assessments_call: applyAssessmentsCall,
+		next_tool_call: nextToolCall,
+		recommended_chain: nextToolCall
+			? [
+					{
+						step: 1,
+						action: "submit_assessments",
+						call: applyAssessmentsCall,
+					},
+					{
+						step: 2,
+						action: "continue_analysis",
+						call: nextToolCall,
+					},
+			  ]
+			: [
+					{
+						step: 1,
+						action: "submit_assessments",
+						call: applyAssessmentsCall,
+					},
+			  ],
+	};
+}
+
 export function registerTools(server: McpServer): void {
 	// =========================================================================
 	// Status - Health check and account info (FREE)
@@ -150,7 +521,14 @@ export function registerTools(server: McpServer): void {
 		"zipfai_search",
 		{
 			description:
-				"Full-featured web search with AI enhancements (1-2 credits). Use when you need: query rewriting for better results, semantic reranking, AI-generated summaries, follow-up suggestions, or comprehensive research via query decomposition. Automatically waits for async results before returning.",
+				`Full-featured web search with AI enhancements (1-2 credits). Returns a list of URLs with titles, snippets, and optional AI summaries.
+
+USE THIS WHEN: You need a list of relevant web pages/URLs on a topic, want to browse what's out there, or need snippets for context.
+USE ask INSTEAD WHEN: You need a direct answer to a specific factual question (e.g., "What is X's revenue?").
+USE research INSTEAD WHEN: You need full page content from top results, not just URLs and snippets.
+USE session_search INSTEAD WHEN: You're doing iterative research and want URL deduplication across multiple searches.
+
+Features: query rewriting, semantic reranking, AI summaries, follow-up suggestions, query decomposition for comprehensive coverage. Automatically waits for async results before returning.`,
 			inputSchema: {
 				query: z
 					.string()
@@ -270,7 +648,14 @@ export function registerTools(server: McpServer): void {
 		"zipfai_ask",
 		{
 			description:
-				"Get direct answers to questions with source citations (2-5 credits based on depth). Returns synthesized answers, not just URLs. Best for factual questions where you need a direct answer. Depth: quick (2 credits, fast), standard (3 credits, balanced), deep (5+ credits, thorough research).",
+				`Get direct answers to questions with source citations (2-5 credits based on depth). Returns a synthesized answer paragraph, not a list of URLs.
+
+USE THIS WHEN: You need a direct answer to a specific question ("What is X's market cap?", "Who is the CEO of Y?", "Compare A vs B").
+USE research INSTEAD WHEN: You need raw data from multiple sources, structured extraction, or full page content — not just an answer.
+USE search INSTEAD WHEN: You just need a list of relevant URLs/snippets without synthesis.
+
+Depth: quick (2 credits, fast), standard (3 credits, balanced), deep (5+ credits, thorough research).
+Tip: For niche or multi-faceted topics, use depth='deep' and enable_decomposition=true for significantly better coverage.`,
 			inputSchema: {
 				question: z
 					.string()
@@ -505,7 +890,18 @@ export function registerTools(server: McpServer): void {
 		"zipfai_create_session",
 		{
 			description:
-				"Create a research session for multi-step workflows (FREE to create). Sessions provide: URL deduplication across searches, context accumulation for better AI results, and unified credit tracking. Use sessions when doing iterative research.",
+				`Create a research session for multi-step workflows (FREE to create). Sessions track URLs you've already seen and build context across operations.
+
+USE SESSIONS WHEN:
+- You'll run 3+ searches on related topics and want to avoid seeing the same URLs repeatedly
+- You need iterative research: search → read results → refine query → search again
+- You want each subsequent search to benefit from accumulated context (smarter AI features)
+
+DON'T BOTHER WHEN:
+- You're doing a single one-off search (use zipfai_search directly)
+- You're using zipfai_research (which handles search + crawl in one call)
+
+Sessions provide: URL deduplication across searches, context accumulation for better AI results, and unified credit tracking.`,
 			inputSchema: {
 				name: z
 					.string()
@@ -565,7 +961,12 @@ export function registerTools(server: McpServer): void {
 		"zipfai_session_search",
 		{
 			description:
-				"Search within a session context (1-2 credits). Automatically deduplicates URLs already found in the session. Use session_id from zipfai_create_session. For comprehensive research, enable query_decomposition.",
+				`Search within a session context (1-2 credits). Automatically deduplicates URLs already found in the session, so each search returns only new results.
+
+USE THIS WHEN: You already have a session and want to run follow-up searches that skip previously seen URLs.
+USE zipfai_search INSTEAD WHEN: You're doing a standalone one-off search without a session.
+
+Requires session_id from zipfai_create_session. For comprehensive research, enable query_decomposition.`,
 			inputSchema: {
 				session_id: z
 					.string()
@@ -769,7 +1170,14 @@ export function registerTools(server: McpServer): void {
 		"zipfai_research",
 		{
 			description:
-				"One-call search + auto-crawl combo for comprehensive research (variable credits: search + crawl costs). Searches for your query, then automatically crawls top results and synthesizes an answer. Best for deep research where you need full content from top sources.",
+				`Search + auto-crawl combo for deep research (variable credits: search + crawl costs). Searches your query, then crawls top results for full page content and returns everything.
+
+USE THIS WHEN: You need comprehensive data from multiple sources, full page content (not just snippets), or structured extraction from top results.
+USE ask INSTEAD WHEN: You just need a quick factual answer to a specific question.
+USE search INSTEAD WHEN: You only need URLs and snippets, not full page content.
+USE sessions INSTEAD WHEN: You're doing multi-step iterative research where later searches should avoid URLs from earlier ones.
+
+Returns: search results + full crawled content from top N results. Supports extraction_schema for structured data extraction from crawled pages.`,
 			inputSchema: {
 				query: z.string().describe("Research query"),
 				search_count: z
@@ -1359,7 +1767,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_get_workflow",
 		{
 			description:
-				"Get workflow details with recent executions and quality diagnostics. Optionally answer quality_questions from a previous call — answers improve result quality and can auto-fix detected issues. FREE.",
+				"Get workflow details with recent executions and quality diagnostics. Optionally answer quality_questions from a previous call — answers improve result quality and can auto-fix detected issues. Response includes a quality_loop field with suggested assessments and recommended next tool calls. FREE.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				assessments: z
@@ -1385,9 +1793,20 @@ export function registerTools(server: McpServer): void {
 					assessmentSubmission = await submitAssessments(workflow_id, { assessments });
 				}
 				const result = await getWorkflowDetails(workflow_id);
-				const response = assessmentSubmission
+				const baseResponse = assessmentSubmission
 					? { ...(result as unknown as Record<string, unknown>), assessment_submission: assessmentSubmission }
 					: result;
+				const qualityLoopHint = buildSingleWorkflowQualityLoopHint({
+					payload: baseResponse,
+					workflowId: workflow_id,
+					toolName: "zipfai_get_workflow",
+					assessmentsSubmitted: Boolean(assessmentSubmission),
+				});
+				const responseObject = asObject(baseResponse);
+				const response =
+					qualityLoopHint && responseObject
+						? { ...responseObject, quality_loop: qualityLoopHint }
+						: baseResponse;
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
@@ -1405,7 +1824,13 @@ export function registerTools(server: McpServer): void {
 		"zipfai_update_workflow",
 		{
 			description:
-				"Update workflow parameters - name, query, schedule, stop condition, status, email/Slack notifications, or suppression threshold (FREE). Use disable_emails/disable_slack to turn off notifications. Use suppression_threshold (0-100) to control notification intelligence.",
+				`Update workflow parameters - name, query, schedule, stop condition, status, email/Slack notifications, or suppression threshold (FREE). Use disable_emails/disable_slack to turn off notifications.
+
+Suppression threshold (0-100) controls notification intelligence — how aggressively low-value "no new developments" notifications are filtered:
+- 0: Send all notifications (no filtering)
+- 30: Balanced (default) — filters obvious "no changes" notifications
+- 50: Important only — more aggressive filtering
+- 70: Critical only — only high-value alerts get through`,
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				name: z.string().optional().describe("New workflow name"),
@@ -1680,7 +2105,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_workflow_timeline",
 		{
 			description:
-				"Get chronological execution history for a workflow (FREE). Shows last 50 executions with quality diagnostics. Answer quality_questions to trigger auto-healing of detected issues.",
+				"Get chronological execution history for a workflow (FREE). Shows last 50 executions with quality diagnostics. Answer quality_questions to trigger auto-healing of detected issues. Response includes quality_loop guidance for immediate follow-up calls.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				assessments: z
@@ -1706,9 +2131,20 @@ export function registerTools(server: McpServer): void {
 					assessmentSubmission = await submitAssessments(workflow_id, { assessments });
 				}
 				const result = await getWorkflowTimeline(workflow_id);
-				const response = assessmentSubmission
+				const baseResponse = assessmentSubmission
 					? { ...(result as unknown as Record<string, unknown>), assessment_submission: assessmentSubmission }
 					: result;
+				const qualityLoopHint = buildSingleWorkflowQualityLoopHint({
+					payload: baseResponse,
+					workflowId: workflow_id,
+					toolName: "zipfai_workflow_timeline",
+					assessmentsSubmitted: Boolean(assessmentSubmission),
+				});
+				const responseObject = asObject(baseResponse);
+				const response =
+					qualityLoopHint && responseObject
+						? { ...responseObject, quality_loop: qualityLoopHint }
+						: baseResponse;
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
@@ -1726,7 +2162,7 @@ export function registerTools(server: McpServer): void {
 		"zipfai_workflow_diff",
 		{
 			description:
-				"Get what changed between workflow executions. Returns diffs with quality diagnostics. Answer quality_questions to trigger auto-healing of detected issues. FREE.",
+				"Get what changed between workflow executions. Returns diffs with quality diagnostics. Answer quality_questions to trigger auto-healing of detected issues. Response includes quality_loop guidance for next actions. FREE.",
 			inputSchema: {
 				workflow_id: z.string().describe("Workflow ID"),
 				limit: z
@@ -1763,9 +2199,20 @@ export function registerTools(server: McpServer): void {
 					limit: limit ?? undefined,
 					since: since ?? undefined,
 				});
-				const response = assessmentSubmission
+				const baseResponse = assessmentSubmission
 					? { ...(result as unknown as Record<string, unknown>), assessment_submission: assessmentSubmission }
 					: result;
+				const qualityLoopHint = buildSingleWorkflowQualityLoopHint({
+					payload: baseResponse,
+					workflowId: workflow_id,
+					toolName: "zipfai_workflow_diff",
+					assessmentsSubmitted: Boolean(assessmentSubmission),
+				});
+				const responseObject = asObject(baseResponse);
+				const response =
+					qualityLoopHint && responseObject
+						? { ...responseObject, quality_loop: qualityLoopHint }
+						: baseResponse;
 
 				return {
 					content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
@@ -1921,18 +2368,25 @@ export function registerTools(server: McpServer): void {
 	server.registerTool(
 		"zipfai_workflow_updates",
 		{
-			description: `Consolidated digest of all workflow updates. Includes quality_questions for workflows with detected issues. Answering them triggers auto-fixes. One call replaces checking each workflow individually. FREE.
+			description: `Consolidated digest of all workflow updates. One call replaces checking each workflow individually. FREE.
 
 Key benefits:
 - One call replaces N calls (list + timeline + diff for each)
 - Pre-sorted by priority: triggered first, then changed, then recent
-- Signal/noise scoring (0-100) with urgency classification (urgent/notable/routine/noise)
+- Signal/noise scoring (0-100) with urgency classification
 - Cross-workflow correlation detection for related changes
-- Quality diagnostics with actionable questions
+- Quality diagnostics with actionable questions (answer via assessments parameter)
+
+Signal scoring (0-100) — how each workflow is ranked:
+- 80+/urgent: Stop condition triggered, regulatory/legal content found
+- 60-79/notable: Multiple new URLs, new domains, extraction field changes
+- 40-59/routine: Minor updates, baseline activity
+- <40/noise: High churn, no meaningful changes
+Key factors: +30 condition triggered, +25 high-priority workflow, +20 legal/academic docs, +10 new domains, +10 new URLs, -15 high result churn
 
 Recommended workflow:
 1. Call zipfai_workflow_updates to get overview
-2. Answer any quality_questions via the assessments parameter
+2. Answer any quality_questions via the assessments parameter (triggers auto-fixes)
 3. For interesting workflows, use zipfai_workflow_diff for details
 4. Take action based on findings
 
@@ -1958,7 +2412,7 @@ Output formats:
 					.number()
 					.optional()
 					.describe(
-						"Limit number of workflows to check (default: 20). Use for large accounts to control response size.",
+						"Optional cap on workflows to check. If omitted, scans all active workflows using pagination (safety cap applied server-side).",
 					),
 				verbose: z
 					.boolean()
@@ -2022,33 +2476,36 @@ Output formats:
 					verbose: verbose ?? undefined,
 					format: format ?? undefined,
 				});
-				if (assessmentSubmission.length > 0) {
-					if (typeof result === "string") {
-						return {
-							content: [
-								{
-									type: "text",
-									text: `${result}\n\nassessment_submission:\n${JSON.stringify(assessmentSubmission, null, 2)}`,
-								},
-							],
-						};
+				const qualityLoopHint = buildWorkflowUpdatesQualityLoopHint({
+					payload: result,
+					assessmentsSubmitted: assessmentSubmission.length > 0,
+					assessmentWorkflowIds: assessments?.map((a) => a.workflow_id),
+				});
+				if (typeof result === "string") {
+					const sections: string[] = [result];
+					if (assessmentSubmission.length > 0) {
+						sections.push(
+							`assessment_submission:\n${JSON.stringify(assessmentSubmission, null, 2)}`,
+						);
+					}
+					if (qualityLoopHint) {
+						sections.push(`quality_loop:\n${JSON.stringify(qualityLoopHint, null, 2)}`);
 					}
 					return {
-						content: [
-							{
-								type: "text",
-								text: JSON.stringify(
-									{ ...(result as unknown as Record<string, unknown>), assessment_submission: assessmentSubmission },
-									null,
-									2,
-								),
-							},
-						],
+						content: [{ type: "text", text: sections.join("\n\n") }],
 					};
 				}
 
+				const responseObject = {
+					...(result as unknown as Record<string, unknown>),
+					...(assessmentSubmission.length > 0
+						? { assessment_submission: assessmentSubmission }
+						: {}),
+					...(qualityLoopHint ? { quality_loop: qualityLoopHint } : {}),
+				};
+
 				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					content: [{ type: "text", text: JSON.stringify(responseObject, null, 2) }],
 				};
 			} catch (error) {
 				return formatError(error);
